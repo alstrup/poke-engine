@@ -17935,6 +17935,89 @@ fn test_emobdyaspectteal_switching_in() {
 }
 
 #[test]
+#[cfg(feature = "terastallization")]
+fn test_ogerpon_gets_embodyaspect_when_terastallizing() {
+    for (ogerpon, embody_aspect) in [
+        (PokemonName::OGERPON, Abilities::EMBODYASPECTTEAL),
+        (
+            PokemonName::OGERPONWELLSPRING,
+            Abilities::EMBODYASPECTWELLSPRING,
+        ),
+        (
+            PokemonName::OGERPONHEARTHFLAME,
+            Abilities::EMBODYASPECTHEARTHFLAME,
+        ),
+        (
+            PokemonName::OGERPONCORNERSTONE,
+            Abilities::EMBODYASPECTCORNERSTONE,
+        ),
+    ] {
+        let mut state = State::default();
+        state.side_one.get_active().id = ogerpon;
+        state.side_one.get_active().ability = Abilities::WATERABSORB;
+        state.side_one.get_active().base_ability = Abilities::WATERABSORB;
+
+        let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+            &mut state,
+            Choices::SPLASH,
+            Choices::SPLASH,
+        );
+        assert_eq!(1, vec_of_instructions.len());
+        let no_tera_boosts = (
+            state.side_one.attack_boost,
+            state.side_one.defense_boost,
+            state.side_one.special_defense_boost,
+            state.side_one.speed_boost,
+        );
+        assert_eq!((0, 0, 0, 0), no_tera_boosts);
+
+        let vec_of_instructions = generate_instructions_with_state_assertion(
+            &mut state,
+            &MoveChoice::MoveTera(PokemonMoveIndex::M0),
+            &MoveChoice::Move(PokemonMoveIndex::M0),
+        );
+        assert_eq!(1, vec_of_instructions.len());
+        state.apply_instructions(&vec_of_instructions[0].instruction_list);
+
+        assert!(state.side_one.get_active().terastallized);
+        assert_eq!(embody_aspect, state.side_one.get_active().ability);
+        assert_eq!(embody_aspect, state.side_one.get_active().base_ability);
+        let boosts = (
+            state.side_one.attack_boost,
+            state.side_one.defense_boost,
+            state.side_one.special_defense_boost,
+            state.side_one.speed_boost,
+        );
+        let expected_boosts = match ogerpon {
+            PokemonName::OGERPON => (0, 0, 0, 1),
+            PokemonName::OGERPONWELLSPRING => (0, 0, 1, 0),
+            PokemonName::OGERPONHEARTHFLAME => (1, 0, 0, 0),
+            _ => (0, 1, 0, 0),
+        };
+        assert_eq!(expected_boosts, boosts);
+    }
+}
+
+#[test]
+#[cfg(feature = "terastallization")]
+fn test_terastallizing_does_not_change_the_ability_of_other_pokemon() {
+    let mut state = State::default();
+    state.side_one.get_active().ability = Abilities::WATERABSORB;
+    state.side_one.get_active().base_ability = Abilities::WATERABSORB;
+
+    let vec_of_instructions = generate_instructions_with_state_assertion(
+        &mut state,
+        &MoveChoice::MoveTera(PokemonMoveIndex::M0),
+        &MoveChoice::Move(PokemonMoveIndex::M0),
+    );
+    state.apply_instructions(&vec_of_instructions[0].instruction_list);
+
+    assert!(state.side_one.get_active().terastallized);
+    assert_eq!(Abilities::WATERABSORB, state.side_one.get_active().ability);
+    assert_eq!(0, state.side_one.special_defense_boost);
+}
+
+#[test]
 fn test_slowstart_activates_on_switch_in() {
     let mut state = State::default();
     state.side_one.pokemon[PokemonIndex::P1].ability = Abilities::SLOWSTART;

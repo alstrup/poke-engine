@@ -33,6 +33,7 @@ use super::items::{
 };
 use super::state::{MoveChoice, PokemonVolatileStatus, Terrain, Weather};
 use crate::choices::{Choice, MoveCategory};
+use crate::pokemon::PokemonName;
 use crate::instruction::{
     ChangeStatusInstruction, DamageInstruction, Instruction, StateInstructions, SwitchInstruction,
 };
@@ -4062,6 +4063,57 @@ pub fn generate_instructions_for_bss_team_preview(
     vec![state_instructions]
 }
 
+fn terastallize(
+    state: &mut State,
+    side_ref: &SideReference,
+    incoming_instructions: &mut StateInstructions,
+) {
+    let side = state.get_side(side_ref);
+    let active = side.get_active();
+    active.terastallized = true;
+    incoming_instructions
+        .instruction_list
+        .push(Instruction::ToggleTerastallized(
+            ToggleTerastallizedInstruction {
+                side_ref: *side_ref,
+            },
+        ));
+
+    // ogerpon's ability becomes embodyaspect when it terastallizes, which boosts a stat right away
+    // and again every time it switches in
+    let (embody_aspect, stat) = match active.id {
+        PokemonName::OGERPON => (Abilities::EMBODYASPECTTEAL, PokemonBoostableStat::Speed),
+        PokemonName::OGERPONWELLSPRING => (
+            Abilities::EMBODYASPECTWELLSPRING,
+            PokemonBoostableStat::SpecialDefense,
+        ),
+        PokemonName::OGERPONHEARTHFLAME => (
+            Abilities::EMBODYASPECTHEARTHFLAME,
+            PokemonBoostableStat::Attack,
+        ),
+        PokemonName::OGERPONCORNERSTONE => (
+            Abilities::EMBODYASPECTCORNERSTONE,
+            PokemonBoostableStat::Defense,
+        ),
+        _ => return,
+    };
+    incoming_instructions
+        .instruction_list
+        .push(Instruction::ChangeBaseAbility(ChangeAbilityInstruction {
+            side_ref: *side_ref,
+            ability_change: embody_aspect as i16 - active.base_ability as i16,
+        }));
+    active.base_ability = embody_aspect;
+    incoming_instructions
+        .instruction_list
+        .push(Instruction::ChangeAbility(ChangeAbilityInstruction {
+            side_ref: *side_ref,
+            ability_change: embody_aspect as i16 - active.ability as i16,
+        }));
+    active.ability = embody_aspect;
+    apply_boost_instruction(side, &stat, &1, side_ref, side_ref, incoming_instructions);
+}
+
 pub fn generate_instructions_from_move_pair(
     state: &mut State,
     side_one_move: &MoveChoice,
@@ -4218,24 +4270,10 @@ pub fn generate_instructions_from_move_pair(
         );
     }
     if s1_tera {
-        state.side_one.get_active().terastallized = true;
-        incoming_instructions
-            .instruction_list
-            .push(Instruction::ToggleTerastallized(
-                ToggleTerastallizedInstruction {
-                    side_ref: SideReference::SideOne,
-                },
-            ));
+        terastallize(state, &SideReference::SideOne, &mut incoming_instructions);
     }
     if s2_tera {
-        state.side_two.get_active().terastallized = true;
-        incoming_instructions
-            .instruction_list
-            .push(Instruction::ToggleTerastallized(
-                ToggleTerastallizedInstruction {
-                    side_ref: SideReference::SideTwo,
-                },
-            ));
+        terastallize(state, &SideReference::SideTwo, &mut incoming_instructions);
     }
 
     run_mega_evolutions(state, s1_mega, s2_mega, &mut incoming_instructions);
@@ -4371,17 +4409,7 @@ fn get_instructions_from_pursuit_hitting_switching_target(
         mega_evolve(state, pursuiting_side_ref, &mut incoming_instructions);
     }
     if pursuiting_side_tera {
-        state
-            .get_side(&pursuiting_side_ref)
-            .get_active()
-            .terastallized = true;
-        incoming_instructions
-            .instruction_list
-            .push(Instruction::ToggleTerastallized(
-                ToggleTerastallizedInstruction {
-                    side_ref: SideReference::SideOne,
-                },
-            ));
+        terastallize(state, &pursuiting_side_ref, &mut incoming_instructions);
     }
 
     // reverse instructions because mega/tera might've added some
