@@ -1,4 +1,4 @@
-use crate::engine::evaluate::evaluate;
+use crate::engine::evaluate::{eval_weights, evaluate};
 use crate::engine::generate_instructions::generate_instructions_from_move_pair;
 use crate::engine::state::MoveChoice;
 use crate::instruction::StateInstructions;
@@ -16,7 +16,7 @@ use std::time::Instant;
 
 fn sigmoid(x: f32) -> f32 {
     // Tuned so that ~200 points is very close to 1.0
-    1.0 / (1.0 + (-0.0125 * x).exp())
+    1.0 / (1.0 + (-eval_weights().sigmoid_scale * x).exp())
 }
 
 #[derive(Debug)]
