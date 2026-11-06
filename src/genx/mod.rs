@@ -7,4 +7,5 @@ pub mod features;
 pub mod generate_instructions;
 pub mod items;
 pub mod learned;
+pub mod policy;
 pub mod state;

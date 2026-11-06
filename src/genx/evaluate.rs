@@ -47,6 +47,9 @@ pub struct EvalWeights {
     pub playout_policy: f32,
     /// the share of new positions that get a playout; the rest are scored at once
     pub playout_share: f32,
+    /// the share of side two's choices in the search drawn from the policy of what people choose,
+    /// where one is set, instead of the search's own rule; 0 leaves the search as it was
+    pub opponent_model: f32,
 }
 
 impl Default for EvalWeights {
@@ -85,6 +88,7 @@ impl Default for EvalWeights {
             playout_turns: 0.0,
             playout_policy: 0.0,
             playout_share: 1.0,
+            opponent_model: 0.0,
         }
     }
 }
@@ -135,6 +139,7 @@ impl EvalWeights {
                 "playout_turns" => weights.playout_turns = value,
                 "playout_policy" => weights.playout_policy = value,
                 "playout_share" => weights.playout_share = value,
+                "opponent_model" => weights.opponent_model = value,
                 other => return Err(format!("unknown evaluation weight: {}", other)),
             }
         }

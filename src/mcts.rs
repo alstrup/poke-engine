@@ -1,5 +1,6 @@
 use crate::engine::evaluate::{eval_weights, evaluate};
 use crate::engine::generate_instructions::generate_instructions_from_move_pair;
+use crate::engine::policy::side_two_chances;
 use crate::engine::state::MoveChoice;
 use crate::instruction::{Instruction, StateInstructions};
 use crate::state::State;
@@ -13,6 +14,9 @@ use web_time::Instant;
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+
+/// How often a node must have been visited before the policy is asked about side two's options.
+const OPPONENT_MODEL_AFTER: u32 = 4;
 
 fn sigmoid(x: f32) -> f32 {
     // Tuned so that ~200 points is very close to 1.0
@@ -34,6 +38,9 @@ pub struct Node {
     // de-coupled for s1 and s2
     pub s1_options: Option<Vec<MoveNode>>,
     pub s2_options: Option<Vec<MoveNode>>,
+    /// the policy's chance of each of side two's options, worked out once the node has been visited
+    /// a few times
+    pub s2_prior: Option<Vec<f32>>,
 }
 
 impl Node {
@@ -47,6 +54,7 @@ impl Node {
             s2_choice: 0,
             s1_options: None,
             s2_options: None,
+            s2_prior: None,
         }
     }
     unsafe fn populate(&mut self, s1_options: Vec<MoveChoice>, s2_options: Vec<MoveChoice>) {
@@ -96,7 +104,7 @@ impl Node {
         }
 
         let s1_mc_index = self.maximize_ucb_for_side(self.s1_options.as_ref().unwrap());
-        let s2_mc_index = self.maximize_ucb_for_side(self.s2_options.as_ref().unwrap());
+        let s2_mc_index = self.side_two_choice(state, rng);
         let key = (self as *mut Node as usize, s1_mc_index, s2_mc_index);
         match children.get_mut(&key) {
             Some(child_vector) => {
@@ -107,6 +115,37 @@ impl Node {
             }
             None => (self as *mut Node, s1_mc_index, s2_mc_index),
         }
+    }
+
+    /// Side two's choice: by the search's own rule, or some of the time, once the node has been
+    /// visited a few times and a policy is set, drawn from what people are likely to choose.
+    fn side_two_choice(&mut self, state: &mut State, rng: &mut impl Rng) -> usize {
+        let share = eval_weights().opponent_model;
+        if share > 0.0 && self.times_visited >= OPPONENT_MODEL_AFTER && rng.random::<f32>() < share
+        {
+            if self.s2_prior.is_none() {
+                let options: Vec<MoveChoice> = self
+                    .s2_options
+                    .as_ref()
+                    .unwrap()
+                    .iter()
+                    .map(|option| option.move_choice.clone())
+                    .collect();
+                self.s2_prior = Some(side_two_chances(state, &options).unwrap_or_default());
+            }
+            let prior = self.s2_prior.as_ref().unwrap();
+            if prior.len() == self.s2_options.as_ref().unwrap().len() {
+                let mut threshold = rng.random::<f32>();
+                for (index, chance) in prior.iter().enumerate() {
+                    threshold -= chance;
+                    if threshold <= 0.0 {
+                        return index;
+                    }
+                }
+                return prior.len() - 1;
+            }
+        }
+        self.maximize_ucb_for_side(self.s2_options.as_ref().unwrap())
     }
 
     unsafe fn sample_node(&self, move_vector: *mut Box<[Node]>, rng: &mut impl Rng) -> *mut Node {
