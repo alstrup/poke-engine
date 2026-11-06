@@ -40,8 +40,12 @@ pub struct EvalWeights {
     pub sigmoid_scale: f32,
     /// the constant inside the square root of the search's exploration term
     pub exploration: f32,
-    /// how many turns of random moves the search plays past a new position before scoring it
+    /// how many turns the search plays past a new position before scoring it
     pub playout_turns: f32,
+    /// how a playout chooses: 0 picks a move at random, 1 the move that does most damage
+    pub playout_policy: f32,
+    /// the share of new positions that get a playout; the rest are scored at once
+    pub playout_share: f32,
 }
 
 impl Default for EvalWeights {
@@ -78,6 +82,8 @@ impl Default for EvalWeights {
             sigmoid_scale: 0.0125,
             exploration: 2.0,
             playout_turns: 0.0,
+            playout_policy: 0.0,
+            playout_share: 1.0,
         }
     }
 }
@@ -126,6 +132,8 @@ impl EvalWeights {
                 "sigmoid_scale" => weights.sigmoid_scale = value,
                 "exploration" => weights.exploration = value,
                 "playout_turns" => weights.playout_turns = value,
+                "playout_policy" => weights.playout_policy = value,
+                "playout_share" => weights.playout_share = value,
                 other => return Err(format!("unknown evaluation weight: {}", other)),
             }
         }

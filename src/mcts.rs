@@ -196,15 +196,31 @@ impl Node {
     pub fn rollout(&mut self, state: &mut State, root_eval: &f32, rng: &mut impl Rng) -> f32 {
         // optionally play a few turns of random moves first, so that a position is not scored in
         // the middle of an exchange
-        let playout_turns = eval_weights().playout_turns as usize;
-        let mut played: Vec<Vec<Instruction>> = Vec::with_capacity(playout_turns);
+        let weights = eval_weights();
+        let mut playout_turns = weights.playout_turns as usize;
+        if playout_turns > 0
+            && weights.playout_share < 1.0
+            && rng.random::<f32>() >= weights.playout_share
+        {
+            playout_turns = 0;
+        }
+        let by_damage = weights.playout_policy >= 1.0;
+        let mut played: Vec<Vec<Instruction>> = Vec::with_capacity(playout_turns.min(64));
         for _ in 0..playout_turns {
             if state.battle_is_over() != 0.0 {
                 break;
             }
             let (s1_options, s2_options) = state.get_all_options();
-            let s1_move = playout_choice(&s1_options, rng);
-            let s2_move = playout_choice(&s2_options, rng);
+            let s1_move = if by_damage {
+                playout_choice_by_damage(state, &s1_options, true, rng)
+            } else {
+                playout_choice(&s1_options, rng)
+            };
+            let s2_move = if by_damage {
+                playout_choice_by_damage(state, &s2_options, false, rng)
+            } else {
+                playout_choice(&s2_options, rng)
+            };
             if s1_move == MoveChoice::None && s2_move == MoveChoice::None {
                 break;
             }
@@ -245,6 +261,66 @@ impl Node {
             state.reverse_instructions(instructions);
         }
         score
+    }
+}
+
+// the damage one side's move does to the other side's active pokemon in the most likely outcome
+fn playout_damage(state: &mut State, choice: &MoveChoice, side_one: bool) -> i32 {
+    let before = if side_one {
+        state.side_two.get_active_immutable().hp
+    } else {
+        state.side_one.get_active_immutable().hp
+    } as i32;
+    let outcomes = if side_one {
+        generate_instructions_from_move_pair(state, choice, &MoveChoice::None, false)
+    } else {
+        generate_instructions_from_move_pair(state, &MoveChoice::None, choice, false)
+    };
+    let likeliest = match outcomes
+        .iter()
+        .max_by(|a, b| a.percentage.total_cmp(&b.percentage))
+    {
+        Some(outcome) => outcome,
+        None => return 0,
+    };
+    state.apply_instructions(&likeliest.instruction_list);
+    let after = if side_one {
+        state.side_two.get_active_immutable().hp
+    } else {
+        state.side_one.get_active_immutable().hp
+    } as i32;
+    state.reverse_instructions(&likeliest.instruction_list);
+    before - after
+}
+
+// a playout that uses the move doing most damage, with one choice in ten at random for variety
+fn playout_choice_by_damage(
+    state: &mut State,
+    options: &Vec<MoveChoice>,
+    side_one: bool,
+    rng: &mut impl Rng,
+) -> MoveChoice {
+    if options.is_empty() {
+        return MoveChoice::None;
+    }
+    if options.len() == 1 || rng.random::<f32>() < 0.1 {
+        return options[rng.random_range(0..options.len())].clone();
+    }
+    let mut best: Option<MoveChoice> = None;
+    let mut best_damage = -1;
+    for candidate in options.iter() {
+        if !matches!(candidate, MoveChoice::Move(_)) {
+            continue;
+        }
+        let damage = playout_damage(state, candidate, side_one);
+        if damage > best_damage {
+            best_damage = damage;
+            best = Some(candidate.clone());
+        }
+    }
+    match best {
+        Some(choice) => choice,
+        None => options[rng.random_range(0..options.len())].clone(),
     }
 }
 
