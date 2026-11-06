@@ -2,14 +2,15 @@
 // feed a small network with hand-made features next to the raw position.
 // The same signals are listed for the side whose view is taken and then for the other side,
 // followed by the state of the field.
+use super::abilities::Abilities;
 use super::damage_calc::{calculate_damage, type_effectiveness_modifier, DamageRolls};
 use super::generate_instructions::get_effective_speed;
 use super::items::Items;
 use super::state::{PokemonVolatileStatus, Terrain, Weather};
 use crate::choices::{Choices, MoveCategory, MoveTarget};
-use crate::state::{Pokemon, PokemonStatus, Side, SideReference, State};
+use crate::state::{Pokemon, PokemonStatus, PokemonType, Side, SideReference, State};
 
-pub const SIDE_FEATURES: usize = 62;
+pub const SIDE_FEATURES: usize = 73;
 pub const FIELD_FEATURES: usize = 9;
 pub const NUM_FEATURES: usize = 2 * SIDE_FEATURES + FIELD_FEATURES;
 
@@ -90,11 +91,12 @@ fn best_damage(state: &State, side_ref: &SideReference, target_hp: i16) -> (f32,
     (best, priority_knockout)
 }
 
-/// Roughly what share of the defender's full health the attacker's best move takes, from stats and
-/// types alone. Unlike the exact calculation it works for pokemon that are not on the field, so it
-/// can say who beats whom across the two teams.
-fn rough_damage(attacker: &Pokemon, defender: &Pokemon) -> f32 {
-    let mut best: f32 = 0.0;
+/// Roughly what share of the defender's full health the attacker's best physical and best special
+/// moves take, from stats and types alone. Unlike the exact calculation it works for pokemon that are
+/// not on the field, so it can say who beats whom across the two teams; keeping the two kinds apart
+/// lets a boost to one of them be applied to it alone.
+fn rough_damage_split(attacker: &Pokemon, defender: &Pokemon) -> (f32, f32) {
+    let (mut physical, mut special): (f32, f32) = (0.0, 0.0);
     for mv in attacker.moves.into_iter() {
         let choice = &mv.choice;
         if mv.id == Choices::NONE || choice.base_power <= 0.0 || mv.pp <= 0 {
@@ -121,9 +123,14 @@ fn rough_damage(attacker: &Pokemon, defender: &Pokemon) -> f32 {
         };
         // the average roll, and the chance of missing
         damage *= 0.925 * (choice.accuracy / 100.0).min(1.0);
-        best = best.max(damage / defender.maxhp.max(1) as f32);
+        let share = damage / defender.maxhp.max(1) as f32;
+        if choice.category == MoveCategory::Physical {
+            physical = physical.max(share);
+        } else {
+            special = special.max(share);
+        }
     }
-    best
+    (physical, special)
 }
 
 fn rough_speed(pokemon: &Pokemon) -> f32 {
@@ -143,12 +150,17 @@ fn rough_speed(pokemon: &Pokemon) -> f32 {
 struct Matchups {
     one_on_two: [[f32; 6]; 6],
     two_on_one: [[f32; 6]; 6],
+    /// the same split into the best physical and the best special hit
+    one_on_two_split: [[(f32, f32); 6]; 6],
+    two_on_one_split: [[(f32, f32); 6]; 6],
 }
 
 fn matchups(state: &State) -> Matchups {
     let mut result = Matchups {
         one_on_two: [[0.0; 6]; 6],
         two_on_one: [[0.0; 6]; 6],
+        one_on_two_split: [[(0.0, 0.0); 6]; 6],
+        two_on_one_split: [[(0.0, 0.0); 6]; 6],
     };
     for (i, mine) in state.side_one.pokemon.pkmn.iter().enumerate() {
         if mine.hp <= 0 {
@@ -158,8 +170,12 @@ fn matchups(state: &State) -> Matchups {
             if theirs.hp <= 0 {
                 continue;
             }
-            result.one_on_two[i][j] = rough_damage(mine, theirs);
-            result.two_on_one[j][i] = rough_damage(theirs, mine);
+            let there = rough_damage_split(mine, theirs);
+            let back = rough_damage_split(theirs, mine);
+            result.one_on_two_split[i][j] = there;
+            result.two_on_one_split[j][i] = back;
+            result.one_on_two[i][j] = there.0.max(there.1);
+            result.two_on_one[j][i] = back.0.max(back.1);
         }
     }
     result
@@ -244,6 +260,190 @@ fn matchup_features(
     out[4] = useless / 6.0;
     out[5] = best_hit.min(1.0);
     out[6] = active_beats / 6.0;
+}
+
+fn stage_factor(stage: i8) -> f32 {
+    if stage >= 0 {
+        (2.0 + stage as f32) / 2.0
+    } else {
+        2.0 / (2.0 - stage as f32)
+    }
+}
+
+/// Whether one pokemon beats another one on one: it needs fewer hits, or as many and moves first.
+fn wins_duel(
+    my_health: f32,
+    my_speed: f32,
+    hit: f32,
+    their_health: f32,
+    their_speed: f32,
+    taken: f32,
+) -> bool {
+    if my_health <= 0.0 {
+        return false;
+    }
+    let my_turns = if hit > 0.0 {
+        (their_health / hit).ceil()
+    } else {
+        f32::MAX
+    };
+    let their_turns = if taken > 0.0 {
+        (my_health / taken).ceil()
+    } else {
+        f32::MAX
+    };
+    my_turns < their_turns
+        || (my_turns == their_turns && my_turns < f32::MAX && my_speed > their_speed)
+}
+
+/// Rock damage, as a share of full health, that entering would cost each pokemon of a side, summed.
+fn rock_exposure(side: &Side) -> f32 {
+    side.pokemon
+        .pkmn
+        .iter()
+        .filter(|p| {
+            p.hp > 0 && p.item != Items::HEAVYDUTYBOOTS && p.ability != Abilities::MAGICGUARD
+        })
+        .map(|p| type_effectiveness_modifier(&PokemonType::ROCK, p) / 8.0)
+        .sum()
+}
+
+fn is_status_spreader(mv: &crate::state::Move) -> bool {
+    mv.choice.category == MoveCategory::Status
+        && mv
+            .choice
+            .status
+            .as_ref()
+            .map_or(false, |status| status.target == MoveTarget::Opponent)
+}
+
+/// What a side can still do, in eleven signals: hazards it could set or suffers, pokemon that would
+/// beat every remaining opponent one on one after a single setup move or without one, and tools
+/// such as Regenerator, Encore and Taunt, status moves and speed.
+fn resource_features(
+    side: &Side,
+    other: &Side,
+    hit_split: &[[(f32, f32); 6]; 6],
+    taken_split: &[[(f32, f32); 6]; 6],
+    out: &mut [f32],
+) {
+    let alive = |s: &Side| s.pokemon.pkmn.iter().filter(|p| p.hp > 0).count();
+    let theirs_alive = alive(other);
+    let mut rock_setter = false;
+    let mut spike_setter = false;
+    let mut removal = false;
+    let mut natural_sweepers = 0.0;
+    let mut setup_sweepers = 0.0;
+    let mut best_setup_share: f32 = 0.0;
+    let mut regenerators = 0.0;
+    let mut disruptors = 0.0;
+    let mut spreaders = 0.0;
+    let mut my_fastest: f32 = 0.0;
+    for (i, me) in side.pokemon.pkmn.iter().enumerate() {
+        if me.hp <= 0 {
+            continue;
+        }
+        my_fastest = my_fastest.max(rough_speed(me));
+        rock_setter |= has_move(me, |mv| mv.id == Choices::STEALTHROCK);
+        spike_setter |= has_move(me, |mv| mv.id == Choices::SPIKES);
+        removal |= has_move(me, removes_hazards);
+        if me.ability == Abilities::REGENERATOR {
+            regenerators += 1.0;
+        }
+        if has_move(me, |mv| matches!(mv.id, Choices::ENCORE | Choices::TAUNT)) {
+            disruptors += 1.0;
+        }
+        if has_move(me, is_status_spreader) {
+            spreaders += 1.0;
+        }
+        // the first setup move, if any, applied once
+        let boost = me
+            .moves
+            .into_iter()
+            .find(|mv| mv.id != Choices::NONE && is_setup(mv))
+            .and_then(|mv| mv.choice.boost.clone());
+        let my_health = me.hp as f32 / me.maxhp.max(1) as f32;
+        let (mut plain, mut boosted) = (0, 0);
+        for (j, them) in other.pokemon.pkmn.iter().enumerate() {
+            if them.hp <= 0 {
+                continue;
+            }
+            let their_health = them.hp as f32 / them.maxhp.max(1) as f32;
+            let (hit_physical, hit_special) = hit_split[i][j];
+            let (taken_physical, taken_special) = taken_split[j][i];
+            if wins_duel(
+                my_health,
+                rough_speed(me),
+                hit_physical.max(hit_special),
+                their_health,
+                rough_speed(them),
+                taken_physical.max(taken_special),
+            ) {
+                plain += 1;
+            }
+            if let Some(boost) = &boost {
+                let b = &boost.boosts;
+                let hit = (hit_physical * stage_factor(b.attack))
+                    .max(hit_special * stage_factor(b.special_attack));
+                let taken = (taken_physical / stage_factor(b.defense))
+                    .max(taken_special / stage_factor(b.special_defense));
+                // setting up costs a turn, in which one hit is taken
+                if wins_duel(
+                    my_health - taken,
+                    rough_speed(me) * stage_factor(b.speed),
+                    hit,
+                    their_health,
+                    rough_speed(them),
+                    taken,
+                ) {
+                    boosted += 1;
+                }
+            }
+        }
+        if theirs_alive > 0 {
+            if plain == theirs_alive {
+                natural_sweepers += 1.0;
+            }
+            if boost.is_some() {
+                if boosted == theirs_alive {
+                    setup_sweepers += 1.0;
+                }
+                best_setup_share = best_setup_share.max(boosted as f32 / theirs_alive as f32);
+            }
+        }
+    }
+    let their_fastest = other
+        .pokemon
+        .pkmn
+        .iter()
+        .filter(|p| p.hp > 0)
+        .map(rough_speed)
+        .fold(0.0, f32::max);
+    let conditions = &side.side_conditions;
+    let other_conditions = &other.side_conditions;
+    out[0] = if rock_setter && other_conditions.stealth_rock == 0 {
+        (rock_exposure(other) / 3.0).min(1.0)
+    } else {
+        0.0
+    };
+    out[1] = if conditions.stealth_rock > 0 {
+        (rock_exposure(side) / 3.0).min(1.0)
+    } else {
+        0.0
+    };
+    out[2] = flag(spike_setter && other_conditions.spikes < 3);
+    out[3] = setup_sweepers / 6.0;
+    out[4] = best_setup_share;
+    out[5] = natural_sweepers / 6.0;
+    out[6] = regenerators / 6.0;
+    out[7] = disruptors / 6.0;
+    out[8] = spreaders / 6.0;
+    out[9] = if their_fastest > 0.0 {
+        (my_fastest / their_fastest / 2.0).min(1.0)
+    } else {
+        1.0
+    };
+    out[10] = flag(removal && (conditions.stealth_rock > 0 || conditions.spikes > 0));
 }
 
 fn side_features(state: &State, side_ref: &SideReference, table: &Matchups, out: &mut [f32]) {
@@ -426,11 +626,29 @@ fn side_features(state: &State, side_ref: &SideReference, table: &Matchups, out:
         (conditions.toxic_count as f32 / 8.0).min(1.0),
     ];
     out[..BASIC].copy_from_slice(&values);
-    let (hit, taken) = match side_ref {
-        SideReference::SideOne => (&table.one_on_two, &table.two_on_one),
-        SideReference::SideTwo => (&table.two_on_one, &table.one_on_two),
+    let (hit, taken, hit_split, taken_split) = match side_ref {
+        SideReference::SideOne => (
+            &table.one_on_two,
+            &table.two_on_one,
+            &table.one_on_two_split,
+            &table.two_on_one_split,
+        ),
+        SideReference::SideTwo => (
+            &table.two_on_one,
+            &table.one_on_two,
+            &table.two_on_one_split,
+            &table.one_on_two_split,
+        ),
     };
-    matchup_features(side, other, hit, taken, &mut out[BASIC..SIDE_FEATURES]);
+    const MATCHUPS: usize = 7;
+    matchup_features(side, other, hit, taken, &mut out[BASIC..BASIC + MATCHUPS]);
+    resource_features(
+        side,
+        other,
+        hit_split,
+        taken_split,
+        &mut out[BASIC + MATCHUPS..SIDE_FEATURES],
+    );
 }
 
 /// Fills `out` with the signals of a position as seen from `perspective`.

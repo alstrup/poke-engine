@@ -1,12 +1,13 @@
 #![cfg(not(any(feature = "gen1", feature = "gen2", feature = "gen3")))]
 
+use poke_engine::choices::Choices;
 use poke_engine::engine::evaluate::{evaluate, table_evaluate};
 use poke_engine::engine::features::{features, NUM_FEATURES, SIDE_FEATURES};
 use poke_engine::engine::learned::{
     learned_win_chance, models_from_text, models_to_text, set_eval_model, stage_of, EvalModel,
     NUM_OUTPUTS, TABLE_SCALE,
 };
-use poke_engine::state::{PokemonIndex, SideReference, State};
+use poke_engine::state::{PokemonIndex, PokemonMoveIndex, SideReference, State};
 
 fn signals(state: &State, side: &SideReference) -> [f32; NUM_FEATURES] {
     let mut out = [0.0; NUM_FEATURES];
@@ -163,4 +164,25 @@ fn test_stage_follows_the_side_with_fewest_left() {
     state.side_one.pokemon[PokemonIndex::P3].hp = 0;
     state.side_one.pokemon[PokemonIndex::P4].hp = 0;
     assert_eq!(stage_of(&state), 2);
+}
+
+#[test]
+fn test_resource_signals_see_rocks_that_could_be_set() {
+    // the eleven resource signals end each side's block
+    let rocks_possible = SIDE_FEATURES - 11;
+    let mut state = State::default();
+    let before = signals(&state, &SideReference::SideOne)[rocks_possible];
+    state
+        .side_one
+        .get_active()
+        .replace_move(PokemonMoveIndex::M0, Choices::STEALTHROCK);
+    let with_setter = signals(&state, &SideReference::SideOne)[rocks_possible];
+    assert_eq!(before, 0.0);
+    assert!(with_setter > 0.0);
+    // once rocks are up, there is nothing more to gain by setting them
+    state.side_two.side_conditions.stealth_rock = 1;
+    let set = signals(&state, &SideReference::SideOne);
+    assert_eq!(set[rocks_possible], 0.0);
+    // and the other side now feels them
+    assert!(set[SIDE_FEATURES + rocks_possible + 1] > 0.0);
 }
