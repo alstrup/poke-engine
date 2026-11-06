@@ -149,6 +149,7 @@ pub const SALT_CURE_DAMAGE_DIVISOR: f32 = 8.0;
 pub const SALT_CURE_DAMAGE_DIVISOR: f32 = 16.0;
 
 pub const SIDE_CONDITION_DURATION: i8 = 5;
+pub const LIGHT_CLAY_SIDE_CONDITION_DURATION: i8 = 8;
 pub const TAILWIND_DURATION: i8 = 4;
 
 const PROTECT_VOLATILES: [PokemonVolatileStatus; 6] = [
@@ -640,9 +641,26 @@ fn generate_instructions_from_side_conditions(
     match side_condition.condition {
         PokemonSideCondition::AuroraVeil
         | PokemonSideCondition::LightScreen
-        | PokemonSideCondition::Reflect
-        | PokemonSideCondition::Safeguard
-        | PokemonSideCondition::Mist => {
+        | PokemonSideCondition::Reflect => {
+            let duration = if state
+                .get_side_immutable(attacking_side_reference)
+                .get_active_immutable()
+                .item
+                == Items::LIGHTCLAY
+            {
+                LIGHT_CLAY_SIDE_CONDITION_DURATION
+            } else {
+                SIDE_CONDITION_DURATION
+            };
+            generate_instructions_from_duration_side_conditions(
+                state,
+                side_condition,
+                attacking_side_reference,
+                incoming_instructions,
+                duration,
+            );
+        }
+        PokemonSideCondition::Safeguard | PokemonSideCondition::Mist => {
             generate_instructions_from_duration_side_conditions(
                 state,
                 side_condition,

@@ -18649,6 +18649,58 @@ fn test_using_auroraveil_in_snow_sets_turns_and_decrements_end_of_turn() {
 }
 
 #[test]
+fn test_lightclay_makes_screens_last_eight_turns() {
+    for (screen, side_condition) in [
+        (Choices::REFLECT, PokemonSideCondition::Reflect),
+        (Choices::LIGHTSCREEN, PokemonSideCondition::LightScreen),
+    ] {
+        let mut state = State::default();
+        state.side_one.get_active().item = Items::LIGHTCLAY;
+
+        let vec_of_instructions =
+            set_moves_on_pkmn_and_call_generate_instructions(&mut state, screen, Choices::SPLASH);
+
+        let expected_instructions = vec![StateInstructions {
+            percentage: 100.0,
+            instruction_list: vec![
+                Instruction::ChangeSideCondition(ChangeSideConditionInstruction {
+                    side_ref: SideReference::SideOne,
+                    side_condition,
+                    amount: 8,
+                }),
+                Instruction::ChangeSideCondition(ChangeSideConditionInstruction {
+                    side_ref: SideReference::SideOne,
+                    side_condition,
+                    amount: -1,
+                }),
+            ],
+        }];
+        assert_eq!(expected_instructions, vec_of_instructions);
+    }
+}
+
+#[test]
+fn test_lightclay_does_not_lengthen_safeguard() {
+    let mut state = State::default();
+    state.side_one.get_active().item = Items::LIGHTCLAY;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::SAFEGUARD,
+        Choices::SPLASH,
+    );
+
+    assert_eq!(
+        Instruction::ChangeSideCondition(ChangeSideConditionInstruction {
+            side_ref: SideReference::SideOne,
+            side_condition: PokemonSideCondition::Safeguard,
+            amount: 5,
+        }),
+        vec_of_instructions[0].instruction_list[0]
+    );
+}
+
+#[test]
 fn test_tailwind() {
     let mut state = State::default();
 

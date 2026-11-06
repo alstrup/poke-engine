@@ -131,6 +131,7 @@ define_enum_with_from_str! {
         DRACOPLATE,
         PIXIEPLATE,
         LIGHTBALL,
+        LIGHTCLAY,
         FOCUSSASH,
         ASPEARBERRY,
         CHERIBERRY,
