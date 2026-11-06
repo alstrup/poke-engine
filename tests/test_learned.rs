@@ -3,7 +3,8 @@
 use poke_engine::engine::evaluate::{evaluate, table_evaluate};
 use poke_engine::engine::features::{features, NUM_FEATURES, SIDE_FEATURES};
 use poke_engine::engine::learned::{
-    learned_win_chance, set_eval_model, EvalModel, NUM_OUTPUTS, TABLE_SCALE,
+    learned_win_chance, models_from_text, models_to_text, set_eval_model, stage_of, EvalModel,
+    NUM_OUTPUTS, TABLE_SCALE,
 };
 use poke_engine::state::{PokemonIndex, SideReference, State};
 
@@ -135,4 +136,31 @@ fn test_skip_weight_passes_the_table_through() {
     let state = State::default();
     let chance = model.win_chance(&state, 80.0);
     assert!((chance - 1.0 / (1.0 + (-80.0 * TABLE_SCALE).exp())).abs() < 1e-6);
+}
+
+#[test]
+fn test_a_network_for_each_stage_is_written_and_read() {
+    let models = vec![patterned_model(3), patterned_model(5), patterned_model(7)];
+    let read = models_from_text(&models_to_text(&models)).unwrap();
+    assert_eq!(read.len(), 3);
+    assert_eq!(read[1].hidden, 5);
+    assert_eq!(read[2].w2, models[2].w2);
+    // a single network is still written and read as before
+    let single = models_from_text(&models_to_text(&models[..1])).unwrap();
+    assert_eq!(single.len(), 1);
+    assert!(models_from_text("stages 3\nnetwork\n1 2 5\n").is_err());
+}
+
+#[test]
+fn test_stage_follows_the_side_with_fewest_left() {
+    let mut state = State::default();
+    assert_eq!(stage_of(&state), 0);
+    state.side_two.pokemon[PokemonIndex::P1].hp = 0;
+    state.side_two.pokemon[PokemonIndex::P2].hp = 0;
+    assert_eq!(stage_of(&state), 1);
+    state.side_one.pokemon[PokemonIndex::P1].hp = 0;
+    state.side_one.pokemon[PokemonIndex::P2].hp = 0;
+    state.side_one.pokemon[PokemonIndex::P3].hp = 0;
+    state.side_one.pokemon[PokemonIndex::P4].hp = 0;
+    assert_eq!(stage_of(&state), 2);
 }

@@ -125,7 +125,56 @@ impl EvalModel {
     }
 }
 
-/// The model the search uses, with the first layer's weights also laid out by signal, so that a
+/// How far a game has gone, by the fewest pokemon either side has left: 0 while both have five or
+/// six, 1 when one has three or four, 2 when one has one or two. A model may have a network for each.
+pub const NUM_STAGES: usize = 3;
+
+pub fn stage_of_left(left: usize) -> usize {
+    if left >= 5 {
+        0
+    } else if left >= 3 {
+        1
+    } else {
+        2
+    }
+}
+
+pub fn stage_of(state: &State) -> usize {
+    let alive = |side: &crate::state::Side| side.pokemon.pkmn.iter().filter(|p| p.hp > 0).count();
+    stage_of_left(alive(&state.side_one).min(alive(&state.side_two)))
+}
+
+/// Reads a model file: one network, or `stages 3` followed by one network for each stage.
+pub fn models_from_text(text: &str) -> Result<Vec<EvalModel>, String> {
+    let text = text.trim_start();
+    let Some(rest) = text.strip_prefix("stages") else {
+        return Ok(vec![EvalModel::from_text(text)?]);
+    };
+    let blocks: Vec<&str> = rest.split("\nnetwork\n").skip(1).collect();
+    if blocks.len() != NUM_STAGES {
+        return Err(format!(
+            "model file has {} networks, expected one for each of {} stages",
+            blocks.len(),
+            NUM_STAGES
+        ));
+    }
+    blocks.into_iter().map(EvalModel::from_text).collect()
+}
+
+/// Writes networks in the form models_from_text reads.
+pub fn models_to_text(models: &[EvalModel]) -> String {
+    if models.len() == 1 {
+        return models[0].to_text();
+    }
+    let mut text = format!("stages {}\n", models.len());
+    for model in models {
+        text.push_str("network\n");
+        text.push_str(&model.to_text());
+    }
+    text
+}
+
+/// A network the search uses, with the first layer's weights also laid out by signal, so that a
 /// position's score is built up one signal at a time across all hidden units at once. That is
 /// several times faster than one long sum per unit, and signals that are zero cost nothing.
 struct Loaded {
@@ -137,27 +186,47 @@ struct Loaded {
 /// The largest hidden layer the fast path handles; a larger model takes the plain path.
 const FAST_HIDDEN: usize = 256;
 
-static EVAL_MODEL: OnceLock<Loaded> = OnceLock::new();
+static EVAL_MODELS: OnceLock<Vec<Loaded>> = OnceLock::new();
 
-/// Makes the search score positions with this model instead of the hand-written evaluation.
-/// Only the first call has any effect, and it must come before the first evaluation.
+/// Makes the search score positions with these networks instead of the hand-written evaluation:
+/// one for every stage, or a single one for all. Only the first call has any effect, and it must
+/// come before the first evaluation.
+pub fn set_eval_models(models: Vec<EvalModel>) -> bool {
+    let loaded = models
+        .into_iter()
+        .map(|model| {
+            let mut by_input = vec![0.0; model.inputs * model.hidden];
+            for unit in 0..model.hidden {
+                for input in 0..model.inputs {
+                    by_input[input * model.hidden + unit] = model.w1[unit * model.inputs + input];
+                }
+            }
+            Loaded { model, by_input }
+        })
+        .collect();
+    EVAL_MODELS.set(loaded).is_ok()
+}
+
 pub fn set_eval_model(model: EvalModel) -> bool {
-    let mut by_input = vec![0.0; model.inputs * model.hidden];
-    for unit in 0..model.hidden {
-        for input in 0..model.inputs {
-            by_input[input * model.hidden + unit] = model.w1[unit * model.inputs + input];
-        }
-    }
-    EVAL_MODEL.set(Loaded { model, by_input }).is_ok()
+    set_eval_models(vec![model])
 }
 
 pub fn eval_model() -> Option<&'static EvalModel> {
-    EVAL_MODEL.get().map(|loaded| &loaded.model)
+    EVAL_MODELS
+        .get()
+        .and_then(|models| models.first())
+        .map(|loaded| &loaded.model)
 }
 
-/// The chance that side one wins from this position by the model given at startup, if there is one.
+/// The chance that side one wins from this position by the model given at startup, if there is one,
+/// given the table's score for it.
 pub fn learned_win_chance(state: &State, table: f32) -> Option<f32> {
-    let loaded = EVAL_MODEL.get()?;
+    let models = EVAL_MODELS.get()?;
+    let loaded = if models.len() == NUM_STAGES {
+        &models[stage_of(state)]
+    } else {
+        models.first()?
+    };
     let model = &loaded.model;
     let hidden = model.hidden;
     if hidden > FAST_HIDDEN {
