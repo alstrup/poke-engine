@@ -17787,6 +17787,7 @@ fn test_magicguard_switching_into_all_hazards() {
 fn test_dauntlessshield() {
     let mut state = State::default();
     state.side_one.pokemon[PokemonIndex::P1].ability = Abilities::DAUNTLESSSHIELD;
+    state.side_one.pokemon[PokemonIndex::P1].base_ability = Abilities::DAUNTLESSSHIELD;
 
     let vec_of_instructions = generate_instructions_with_state_assertion(
         &mut state,
@@ -17807,7 +17808,58 @@ fn test_dauntlessshield() {
                 stat: PokemonBoostableStat::Defense,
                 amount: 1,
             }),
+            // in gen9 the ability only activates once per battle
+            #[cfg(feature = "gen9")]
+            Instruction::ChangeBaseAbility(ChangeAbilityInstruction {
+                side_ref: SideReference::SideOne,
+                ability_change: Abilities::NONE as i16 - Abilities::DAUNTLESSSHIELD as i16,
+            }),
+            #[cfg(feature = "gen9")]
+            Instruction::ChangeAbility(ChangeAbilityInstruction {
+                side_ref: SideReference::SideOne,
+                ability_change: Abilities::NONE as i16 - Abilities::DAUNTLESSSHIELD as i16,
+            }),
         ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
+#[cfg(feature = "gen9")]
+fn test_dauntlessshield_does_not_activate_a_second_time() {
+    let mut state = State::default();
+    state.side_one.pokemon[PokemonIndex::P1].ability = Abilities::DAUNTLESSSHIELD;
+    state.side_one.pokemon[PokemonIndex::P1].base_ability = Abilities::DAUNTLESSSHIELD;
+
+    // first switch-in uses the ability up
+    let first_switch_in = generate_instructions_with_state_assertion(
+        &mut state,
+        &MoveChoice::Switch(PokemonIndex::P1),
+        &MoveChoice::Move(PokemonMoveIndex::M0),
+    );
+    state.apply_instructions(&first_switch_in[0].instruction_list);
+    assert_eq!(1, state.side_one.defense_boost);
+
+    // switch out and back in
+    let switch_out = generate_instructions_with_state_assertion(
+        &mut state,
+        &MoveChoice::Switch(PokemonIndex::P0),
+        &MoveChoice::Move(PokemonMoveIndex::M0),
+    );
+    state.apply_instructions(&switch_out[0].instruction_list);
+    let vec_of_instructions = generate_instructions_with_state_assertion(
+        &mut state,
+        &MoveChoice::Switch(PokemonIndex::P1),
+        &MoveChoice::Move(PokemonMoveIndex::M0),
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![Instruction::Switch(SwitchInstruction {
+            side_ref: SideReference::SideOne,
+            previous_index: PokemonIndex::P0,
+            next_index: PokemonIndex::P1,
+        })],
     }];
     assert_eq!(expected_instructions, vec_of_instructions);
 }
@@ -17816,6 +17868,7 @@ fn test_dauntlessshield() {
 fn test_intrepidsword() {
     let mut state = State::default();
     state.side_one.pokemon[PokemonIndex::P1].ability = Abilities::INTREPIDSWORD;
+    state.side_one.pokemon[PokemonIndex::P1].base_ability = Abilities::INTREPIDSWORD;
 
     let vec_of_instructions = generate_instructions_with_state_assertion(
         &mut state,
@@ -17835,6 +17888,17 @@ fn test_intrepidsword() {
                 side_ref: SideReference::SideOne,
                 stat: PokemonBoostableStat::Attack,
                 amount: 1,
+            }),
+            // in gen9 the ability only activates once per battle
+            #[cfg(feature = "gen9")]
+            Instruction::ChangeBaseAbility(ChangeAbilityInstruction {
+                side_ref: SideReference::SideOne,
+                ability_change: Abilities::NONE as i16 - Abilities::INTREPIDSWORD as i16,
+            }),
+            #[cfg(feature = "gen9")]
+            Instruction::ChangeAbility(ChangeAbilityInstruction {
+                side_ref: SideReference::SideOne,
+                ability_change: Abilities::NONE as i16 - Abilities::INTREPIDSWORD as i16,
             }),
         ],
     }];

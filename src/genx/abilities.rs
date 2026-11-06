@@ -1397,6 +1397,35 @@ pub fn ability_end_of_turn(
     }
 }
 
+// In gen9 intrepidsword and dauntlessshield only activate once per battle.
+// Nothing else reads these abilities, so removing the ability remembers that it has been used
+// without adding anything to the state.
+#[cfg(feature = "gen9")]
+fn use_up_once_per_battle_ability(
+    side: &mut Side,
+    side_ref: &SideReference,
+    instructions: &mut StateInstructions,
+) {
+    let active_pkmn = side.get_active();
+    // a traced ability is not the pokemon's own, so only its own ability is used up for good
+    if active_pkmn.base_ability == active_pkmn.ability {
+        instructions
+            .instruction_list
+            .push(Instruction::ChangeBaseAbility(ChangeAbilityInstruction {
+                side_ref: *side_ref,
+                ability_change: Abilities::NONE as i16 - active_pkmn.base_ability as i16,
+            }));
+        active_pkmn.base_ability = Abilities::NONE;
+    }
+    instructions
+        .instruction_list
+        .push(Instruction::ChangeAbility(ChangeAbilityInstruction {
+            side_ref: *side_ref,
+            ability_change: Abilities::NONE as i16 - active_pkmn.ability as i16,
+        }));
+    active_pkmn.ability = Abilities::NONE;
+}
+
 pub fn ability_on_switch_in(
     state: &mut State,
     side_ref: &SideReference,
@@ -1512,6 +1541,8 @@ pub fn ability_on_switch_in(
                     stat: PokemonBoostableStat::Attack,
                     amount: 1,
                 }));
+            #[cfg(feature = "gen9")]
+            use_up_once_per_battle_ability(attacking_side, side_ref, instructions);
         }
         Abilities::SLOWSTART => {
             instructions
@@ -1663,6 +1694,8 @@ pub fn ability_on_switch_in(
                     stat: PokemonBoostableStat::Defense,
                     amount: 1,
                 }));
+            #[cfg(feature = "gen9")]
+            use_up_once_per_battle_ability(attacking_side, side_ref, instructions);
         }
         Abilities::GRASSYSURGE => {
             if state.terrain.terrain_type != Terrain::GRASSYTERRAIN {
