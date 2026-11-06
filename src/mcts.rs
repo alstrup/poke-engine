@@ -1,7 +1,7 @@
 use crate::engine::evaluate::{eval_weights, evaluate};
 use crate::engine::generate_instructions::generate_instructions_from_move_pair;
 use crate::engine::state::MoveChoice;
-use crate::instruction::StateInstructions;
+use crate::instruction::{Instruction, StateInstructions};
 use crate::state::State;
 use rand::prelude::*;
 use rand::rng;
@@ -193,9 +193,45 @@ impl Node {
         (*self.parent).backpropagate(score, state);
     }
 
-    pub fn rollout(&mut self, state: &mut State, root_eval: &f32) -> f32 {
+    pub fn rollout(&mut self, state: &mut State, root_eval: &f32, rng: &mut impl Rng) -> f32 {
+        // optionally play a few turns of random moves first, so that a position is not scored in
+        // the middle of an exchange
+        let playout_turns = eval_weights().playout_turns as usize;
+        let mut played: Vec<Vec<Instruction>> = Vec::with_capacity(playout_turns);
+        for _ in 0..playout_turns {
+            if state.battle_is_over() != 0.0 {
+                break;
+            }
+            let (s1_options, s2_options) = state.get_all_options();
+            let s1_move = playout_choice(&s1_options, rng);
+            let s2_move = playout_choice(&s2_options, rng);
+            if s1_move == MoveChoice::None && s2_move == MoveChoice::None {
+                break;
+            }
+            let mut outcomes =
+                generate_instructions_from_move_pair(state, &s1_move, &s2_move, false);
+            if outcomes.is_empty() {
+                break;
+            }
+            let total: f32 = outcomes.iter().map(|o| o.percentage.max(0.0)).sum();
+            let mut chosen = 0;
+            if total > 0.0 {
+                let mut threshold = rng.random_range(0.0..total);
+                for (index, outcome) in outcomes.iter().enumerate() {
+                    threshold -= outcome.percentage.max(0.0);
+                    chosen = index;
+                    if threshold <= 0.0 {
+                        break;
+                    }
+                }
+            }
+            let instructions = outcomes.swap_remove(chosen).instruction_list;
+            state.apply_instructions(&instructions);
+            played.push(instructions);
+        }
+
         let battle_is_over = state.battle_is_over();
-        if battle_is_over == 0.0 {
+        let score = if battle_is_over == 0.0 {
             let eval = evaluate(state);
             sigmoid(eval - root_eval)
         } else {
@@ -204,8 +240,27 @@ impl Node {
             } else {
                 battle_is_over
             }
+        };
+        for instructions in played.iter().rev() {
+            state.reverse_instructions(instructions);
         }
+        score
     }
+}
+
+// a playout attacks or sets up, and only switches when it has to
+fn playout_choice(options: &Vec<MoveChoice>, rng: &mut impl Rng) -> MoveChoice {
+    let moves: Vec<&MoveChoice> = options
+        .iter()
+        .filter(|choice| matches!(choice, MoveChoice::Move(_)))
+        .collect();
+    if !moves.is_empty() {
+        return moves[rng.random_range(0..moves.len())].clone();
+    }
+    if options.is_empty() {
+        return MoveChoice::None;
+    }
+    options[rng.random_range(0..options.len())].clone()
 }
 
 #[derive(Debug)]
@@ -221,7 +276,8 @@ impl MoveNode {
             return f32::INFINITY;
         }
         let score = (self.total_score / self.visits as f32)
-            + (2.0 * (parent_visits as f32).ln() / self.visits as f32).sqrt();
+            + (eval_weights().exploration * (parent_visits as f32).ln() / self.visits as f32)
+                .sqrt();
         score
     }
     pub fn average_score(&self) -> f32 {
@@ -262,7 +318,7 @@ fn mcts_iteration(
 ) {
     let (mut new_node, s1_move, s2_move) = unsafe { root_node.selection(state, children, rng) };
     new_node = unsafe { (*new_node).expand(state, s1_move, s2_move, children, rng) };
-    let rollout_result = unsafe { (*new_node).rollout(state, root_eval) };
+    let rollout_result = unsafe { (*new_node).rollout(state, root_eval, rng) };
     unsafe { (*new_node).backpropagate(rollout_result, state) }
 }
 

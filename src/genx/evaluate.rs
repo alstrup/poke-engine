@@ -38,6 +38,10 @@ pub struct EvalWeights {
     pub sticky_web: f32,
     pub has_item: f32,
     pub sigmoid_scale: f32,
+    /// the constant inside the square root of the search's exploration term
+    pub exploration: f32,
+    /// how many turns of random moves the search plays past a new position before scoring it
+    pub playout_turns: f32,
 }
 
 impl Default for EvalWeights {
@@ -72,6 +76,8 @@ impl Default for EvalWeights {
             sticky_web: -25.0,
             has_item: 10.0,
             sigmoid_scale: 0.0125,
+            exploration: 2.0,
+            playout_turns: 0.0,
         }
     }
 }
@@ -118,6 +124,8 @@ impl EvalWeights {
                 "sticky_web" => weights.sticky_web = value,
                 "has_item" => weights.has_item = value,
                 "sigmoid_scale" => weights.sigmoid_scale = value,
+                "exploration" => weights.exploration = value,
+                "playout_turns" => weights.playout_turns = value,
                 other => return Err(format!("unknown evaluation weight: {}", other)),
             }
         }
