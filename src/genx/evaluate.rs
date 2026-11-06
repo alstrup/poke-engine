@@ -1,5 +1,6 @@
 use super::abilities::Abilities;
 use super::items::Items;
+use super::learned::learned_win_chance;
 use super::state::PokemonVolatileStatus;
 use crate::choices::MoveCategory;
 use crate::state::{Pokemon, PokemonStatus, Side, State};
@@ -274,6 +275,12 @@ fn evaluate_pokemon(pokemon: &Pokemon, w: &EvalWeights) -> f32 {
 
 pub fn evaluate(state: &State) -> f32 {
     let w = eval_weights();
+    // a learned model, if one has been set, takes the place of the table below. Its chance of
+    // winning is put on the table's scale, so that the search compares positions as before.
+    if let Some(chance) = learned_win_chance(state) {
+        let chance = chance.clamp(0.001, 0.999);
+        return (chance / (1.0 - chance)).ln() / w.sigmoid_scale;
+    }
     let mut score = 0.0;
 
     let mut iter = state.side_one.pokemon.into_iter();
@@ -306,7 +313,8 @@ pub fn evaluate(state: &State) -> f32 {
                 }
 
                 score += get_boost_multiplier(state.side_one.attack_boost) * w.pokemon_attack_boost;
-                score += get_boost_multiplier(state.side_one.defense_boost) * w.pokemon_defense_boost;
+                score +=
+                    get_boost_multiplier(state.side_one.defense_boost) * w.pokemon_defense_boost;
                 score += get_boost_multiplier(state.side_one.special_attack_boost)
                     * w.pokemon_special_attack_boost;
                 score += get_boost_multiplier(state.side_one.special_defense_boost)
@@ -352,7 +360,8 @@ pub fn evaluate(state: &State) -> f32 {
                 }
 
                 score -= get_boost_multiplier(state.side_two.attack_boost) * w.pokemon_attack_boost;
-                score -= get_boost_multiplier(state.side_two.defense_boost) * w.pokemon_defense_boost;
+                score -=
+                    get_boost_multiplier(state.side_two.defense_boost) * w.pokemon_defense_boost;
                 score -= get_boost_multiplier(state.side_two.special_attack_boost)
                     * w.pokemon_special_attack_boost;
                 score -= get_boost_multiplier(state.side_two.special_defense_boost)

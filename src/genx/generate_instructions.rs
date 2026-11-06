@@ -2551,7 +2551,7 @@ fn combine_duplicate_instructions(list_of_instructions: &mut Vec<StateInstructio
     }
 }
 
-fn get_effective_speed(state: &State, side_reference: &SideReference) -> i16 {
+pub fn get_effective_speed(state: &State, side_reference: &SideReference) -> i16 {
     let side = state.get_side_immutable(side_reference);
     let active_pkmn = side.get_active_immutable();
 
