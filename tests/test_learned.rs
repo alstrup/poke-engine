@@ -1,8 +1,10 @@
 #![cfg(not(any(feature = "gen1", feature = "gen2", feature = "gen3")))]
 
-use poke_engine::engine::evaluate::evaluate;
+use poke_engine::engine::evaluate::{evaluate, table_evaluate};
 use poke_engine::engine::features::{features, NUM_FEATURES, SIDE_FEATURES};
-use poke_engine::engine::learned::{learned_win_chance, set_eval_model, EvalModel, NUM_OUTPUTS};
+use poke_engine::engine::learned::{
+    learned_win_chance, set_eval_model, EvalModel, NUM_OUTPUTS, TABLE_SCALE,
+};
 use poke_engine::state::{PokemonIndex, SideReference, State};
 
 fn signals(state: &State, side: &SideReference) -> [f32; NUM_FEATURES] {
@@ -23,6 +25,7 @@ fn patterned_model(hidden: usize) -> EvalModel {
             .map(|i| wave(i + 3, 0.6))
             .collect(),
         b2: (0..NUM_OUTPUTS).map(|i| wave(i + 11, 0.2)).collect(),
+        skip: (0..NUM_OUTPUTS).map(|i| 0.5 + wave(i + 5, 0.2)).collect(),
     }
 }
 
@@ -67,8 +70,11 @@ fn test_model_survives_being_written_and_read() {
     let model = patterned_model(8);
     let read = EvalModel::from_text(&model.to_text()).unwrap();
     let state = State::default();
-    assert_eq!(model.win_chance(&state), read.win_chance(&state));
-    for output in read.outputs(&signals(&state, &SideReference::SideOne)) {
+    assert_eq!(
+        model.win_chance(&state, 30.0),
+        read.win_chance(&state, 30.0)
+    );
+    for output in read.outputs(&signals(&state, &SideReference::SideOne), 0.3) {
         assert!(output > 0.0 && output < 1.0);
     }
 }
@@ -84,14 +90,49 @@ fn test_search_scores_with_the_model_once_it_is_set() {
     state.side_two.get_active().hp /= 3;
     state.side_two.pokemon[PokemonIndex::P4].hp = 0;
     let model = patterned_model(16);
-    let plain = model.win_chance(&state);
+    let table = table_evaluate(&state);
+    let plain = model.win_chance(&state, table);
     assert!(set_eval_model(model));
     // the quick way of working out the first layer gives the same chance as the plain way
-    let quick = learned_win_chance(&state).unwrap();
+    let quick = learned_win_chance(&state, table).unwrap();
     assert!((quick - plain).abs() < 1e-5);
     // and the evaluation is that chance as log odds, on the scale the search expects
     let chance = quick.clamp(0.001, 0.999);
     let score = evaluate(&state);
     assert!(score.is_finite());
     assert_eq!(score > 0.0, (chance / (1.0 - chance)).ln() > 0.0);
+}
+
+#[test]
+fn test_model_without_skip_weights_is_still_read() {
+    let mut model = patterned_model(4);
+    model.skip = vec![0.0; NUM_OUTPUTS];
+    let text = model.to_text();
+    // a file written before the skip weights existed ends after b2
+    let old: String = text.lines().take(5).collect::<Vec<_>>().join("\n");
+    let read = EvalModel::from_text(&old).unwrap();
+    assert_eq!(read.skip, vec![0.0; NUM_OUTPUTS]);
+    let state = State::default();
+    assert_eq!(
+        model.win_chance(&state, 50.0),
+        read.win_chance(&state, 50.0)
+    );
+}
+
+#[test]
+fn test_skip_weight_passes_the_table_through() {
+    // a network that adds nothing, with a skip weight of one, gives the table's own chance
+    let hidden = 2;
+    let model = EvalModel {
+        inputs: NUM_FEATURES,
+        hidden,
+        w1: vec![0.0; hidden * NUM_FEATURES],
+        b1: vec![0.0; hidden],
+        w2: vec![0.0; NUM_OUTPUTS * hidden],
+        b2: vec![0.0; NUM_OUTPUTS],
+        skip: vec![1.0; NUM_OUTPUTS],
+    };
+    let state = State::default();
+    let chance = model.win_chance(&state, 80.0);
+    assert!((chance - 1.0 / (1.0 + (-80.0 * TABLE_SCALE).exp())).abs() < 1e-6);
 }

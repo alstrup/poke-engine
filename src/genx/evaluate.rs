@@ -275,12 +275,20 @@ fn evaluate_pokemon(pokemon: &Pokemon, w: &EvalWeights) -> f32 {
 
 pub fn evaluate(state: &State) -> f32 {
     let w = eval_weights();
-    // a learned model, if one has been set, takes the place of the table below. Its chance of
-    // winning is put on the table's scale, so that the search compares positions as before.
-    if let Some(chance) = learned_win_chance(state) {
+    let table = table_evaluate(state);
+    // a learned model, if one has been set, takes the place of the table. It may build on the
+    // table's score, and its chance of winning is put on the table's scale, so that the search
+    // compares positions as before.
+    if let Some(chance) = learned_win_chance(state, table) {
         let chance = chance.clamp(0.001, 0.999);
         return (chance / (1.0 - chance)).ln() / w.sigmoid_scale;
     }
+    table
+}
+
+/// The hand-written table of material and conditions, from side one's point of view.
+pub fn table_evaluate(state: &State) -> f32 {
+    let w = eval_weights();
     let mut score = 0.0;
 
     let mut iter = state.side_one.pokemon.into_iter();
