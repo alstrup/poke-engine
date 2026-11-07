@@ -50,6 +50,8 @@ pub struct EvalWeights {
     /// the share of side two's choices in the search drawn from the policy of what people choose,
     /// where one is set, instead of the search's own rule; 0 leaves the search as it was
     pub opponent_model: f32,
+    /// side two's boosts count this many times as much as side one's in the table
+    pub opponent_boost_scale: f32,
 }
 
 impl Default for EvalWeights {
@@ -89,6 +91,7 @@ impl Default for EvalWeights {
             playout_policy: 0.0,
             playout_share: 1.0,
             opponent_model: 0.0,
+            opponent_boost_scale: 1.0,
         }
     }
 }
@@ -140,6 +143,7 @@ impl EvalWeights {
                 "playout_policy" => weights.playout_policy = value,
                 "playout_share" => weights.playout_share = value,
                 "opponent_model" => weights.opponent_model = value,
+                "opponent_boost_scale" => weights.opponent_boost_scale = value,
                 other => return Err(format!("unknown evaluation weight: {}", other)),
             }
         }
@@ -293,7 +297,11 @@ pub fn evaluate(state: &State) -> f32 {
 
 /// The hand-written table of material and conditions, from side one's point of view.
 pub fn table_evaluate(state: &State) -> f32 {
-    let w = eval_weights();
+    table_evaluate_with(state, eval_weights())
+}
+
+/// The table with the weights given, rather than those set for the search.
+pub fn table_evaluate_with(state: &State, w: &EvalWeights) -> f32 {
     let mut score = 0.0;
 
     let mut iter = state.side_one.pokemon.into_iter();
@@ -372,14 +380,18 @@ pub fn table_evaluate(state: &State) -> f32 {
                     score -= w.confusion;
                 }
 
-                score -= get_boost_multiplier(state.side_two.attack_boost) * w.pokemon_attack_boost;
-                score -=
+                // side two's boosts may count for more than side one's, for a search that should
+                // fear an opponent setting up without itself setting up more
+                let mut boosts =
+                    get_boost_multiplier(state.side_two.attack_boost) * w.pokemon_attack_boost;
+                boosts +=
                     get_boost_multiplier(state.side_two.defense_boost) * w.pokemon_defense_boost;
-                score -= get_boost_multiplier(state.side_two.special_attack_boost)
+                boosts += get_boost_multiplier(state.side_two.special_attack_boost)
                     * w.pokemon_special_attack_boost;
-                score -= get_boost_multiplier(state.side_two.special_defense_boost)
+                boosts += get_boost_multiplier(state.side_two.special_defense_boost)
                     * w.pokemon_special_defense_boost;
-                score -= get_boost_multiplier(state.side_two.speed_boost) * w.pokemon_speed_boost;
+                boosts += get_boost_multiplier(state.side_two.speed_boost) * w.pokemon_speed_boost;
+                score -= boosts * w.opponent_boost_scale;
             }
         }
         if pkmn.terastallized {

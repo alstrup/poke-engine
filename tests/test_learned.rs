@@ -186,3 +186,26 @@ fn test_resource_signals_see_rocks_that_could_be_set() {
     // and the other side now feels them
     assert!(set[SIDE_FEATURES + rocks_possible + 1] > 0.0);
 }
+
+#[test]
+fn test_opponent_boosts_can_count_for_more() {
+    use poke_engine::engine::evaluate::{table_evaluate_with, EvalWeights};
+    let mut state = State::default();
+    state.side_two.attack_boost = 2;
+    let plain = table_evaluate_with(&state, &EvalWeights::default());
+    let feared = table_evaluate_with(
+        &state,
+        &EvalWeights::from_spec("opponent_boost_scale=2").unwrap(),
+    );
+    assert!(feared < plain);
+    // side one's boosts are not touched
+    let mut mine = State::default();
+    mine.side_one.attack_boost = 2;
+    assert_eq!(
+        table_evaluate_with(&mine, &EvalWeights::default()),
+        table_evaluate_with(
+            &mine,
+            &EvalWeights::from_spec("opponent_boost_scale=2").unwrap()
+        )
+    );
+}
