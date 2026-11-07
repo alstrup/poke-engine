@@ -7,6 +7,7 @@ use crate::state::State;
 use rand::prelude::*;
 use rand::rng;
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::time::Duration;
 
 #[cfg(target_arch = "wasm32")]
@@ -17,6 +18,36 @@ use std::time::Instant;
 
 /// How often a node must have been visited before the policy is asked about side two's options.
 const OPPONENT_MODEL_AFTER: u32 = 4;
+
+/// Hashes the children map's keys, which are a node's address and two option indices. The keys
+/// come from the search itself, so a fast multiply-and-rotate hash (as in rustc's FxHash) is
+/// enough, and much cheaper than the standard library's SipHash.
+#[derive(Default, Clone, Copy)]
+pub struct ChildKeyHasher(u64);
+
+impl Hasher for ChildKeyHasher {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            self.write_u64(*byte as u64);
+        }
+    }
+    #[inline]
+    fn write_u64(&mut self, value: u64) {
+        self.0 = (self.0.rotate_left(5) ^ value).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+    #[inline]
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(value as u64);
+    }
+    #[inline]
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+/// The children of each node, by the node's address and the two sides' option indices.
+pub type Children = HashMap<(usize, usize, usize), Box<[Node]>, BuildHasherDefault<ChildKeyHasher>>;
 
 fn sigmoid(x: f32) -> f32 {
     // Tuned so that ~200 points is very close to 1.0
@@ -82,8 +113,10 @@ impl Node {
     pub fn maximize_ucb_for_side(&self, side_map: &[MoveNode]) -> usize {
         let mut choice = 0;
         let mut best_ucb1 = f32::MIN;
+        // the exploration term's numerator is the same for every option, so it is worked out once
+        let numerator = eval_weights().exploration * (self.times_visited as f32).ln();
         for (index, node) in side_map.iter().enumerate() {
-            let this_ucb1 = node.ucb1(self.times_visited);
+            let this_ucb1 = node.ucb1_with(numerator);
             if this_ucb1 > best_ucb1 {
                 best_ucb1 = this_ucb1;
                 choice = index;
@@ -95,7 +128,7 @@ impl Node {
     pub unsafe fn selection(
         &mut self,
         state: &mut State,
-        children: &mut HashMap<(usize, usize, usize), Box<[Node]>>,
+        children: &mut Children,
         rng: &mut impl Rng,
     ) -> (*mut Node, usize, usize) {
         if self.s1_options.is_none() {
@@ -174,7 +207,7 @@ impl Node {
         state: &mut State,
         s1_move_index: usize,
         s2_move_index: usize,
-        children: &mut HashMap<(usize, usize, usize), Box<[Node]>>,
+        children: &mut Children,
         rng: &mut impl Rng,
     ) -> *mut Node {
         let s1_move = &self.s1_options.as_ref().unwrap()[s1_move_index].move_choice;
@@ -386,6 +419,14 @@ pub struct MoveNode {
 }
 
 impl MoveNode {
+    /// The same as `ucb1`, given the exploration constant times the log of the parent's visits.
+    #[inline]
+    pub fn ucb1_with(&self, numerator: f32) -> f32 {
+        if self.visits == 0 {
+            return f32::INFINITY;
+        }
+        (self.total_score / self.visits as f32) + (numerator / self.visits as f32).sqrt()
+    }
     pub fn ucb1(&self, parent_visits: u32) -> f32 {
         if self.visits == 0 {
             return f32::INFINITY;
@@ -428,7 +469,7 @@ fn mcts_iteration(
     root_node: &mut Node,
     state: &mut State,
     root_eval: &f32,
-    children: &mut HashMap<(usize, usize, usize), Box<[Node]>>,
+    children: &mut Children,
     rng: &mut impl Rng,
 ) {
     let (mut new_node, s1_move, s2_move) = unsafe { root_node.selection(state, children, rng) };
@@ -446,7 +487,7 @@ fn run_mcts_loop(
     root_node: &mut Node,
     state: &mut State,
     root_eval: &f32,
-    children: &mut HashMap<(usize, usize, usize), Box<[Node]>>,
+    children: &mut Children,
     limit: SearchLimit,
 ) {
     let mut rng = rng();
@@ -485,7 +526,7 @@ pub fn perform_mcts(
         root_node.populate(side_one_options, side_two_options);
     }
     root_node.root = true;
-    let mut children: HashMap<(usize, usize, usize), Box<[Node]>> = HashMap::new();
+    let mut children: Children = Children::default();
 
     let root_eval = evaluate(state);
     let search_limit = if max_iterations > 0 {
