@@ -5945,6 +5945,30 @@ mod tests {
     }
 
     #[test]
+    fn test_rest_fails_at_full_health() {
+        let mut state: State = State::default();
+        let mut choice = MOVES.get(&Choices::REST).unwrap().to_owned();
+
+        let mut instructions = vec![];
+        generate_instructions_from_move(
+            &mut state,
+            &mut choice,
+            &MOVES.get(&Choices::TACKLE).unwrap(),
+            SideReference::SideOne,
+            StateInstructions::default(),
+            &mut instructions,
+            false,
+        );
+
+        let expected_instructions = vec![StateInstructions {
+            percentage: 100.0,
+            instruction_list: vec![],
+        }];
+
+        assert_eq!(instructions, expected_instructions)
+    }
+
+    #[test]
     fn test_substitute_does_not_block_rest() {
         let mut state: State = State::default();
         state
