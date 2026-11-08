@@ -10175,6 +10175,37 @@ fn test_painsplit() {
 }
 
 #[test]
+fn test_painsplit_does_not_heal_above_maximum_health() {
+    let mut state = State::default();
+    state.side_one.get_active().hp = 90;
+    state.side_one.get_active().maxhp = 100;
+    state.side_two.get_active().hp = 300;
+    state.side_two.get_active().maxhp = 300;
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::PAINSPLIT,
+        Choices::SPLASH,
+    );
+
+    // The average is 195, but the user can only be healed to its maximum of 100
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideOne,
+                damage_amount: -10,
+            }),
+            Instruction::Damage(DamageInstruction {
+                side_ref: SideReference::SideTwo,
+                damage_amount: 105,
+            }),
+        ],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
 fn test_painsplit_on_substitute() {
     let mut state = State::default();
     state.side_one.get_active().hp = 50;

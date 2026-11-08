@@ -1485,21 +1485,24 @@ pub fn choice_special_effect(
                 let target_hp = (attacking_side.get_active_immutable().hp
                     + defending_side.get_active_immutable().hp)
                     / 2;
+                // Neither Pokémon can go above its maximum health
+                let attacker_hp = target_hp.min(attacking_side.get_active_immutable().maxhp);
+                let defender_hp = target_hp.min(defending_side.get_active_immutable().maxhp);
                 instructions
                     .instruction_list
                     .push(Instruction::Damage(DamageInstruction {
                         side_ref: *attacking_side_ref,
-                        damage_amount: attacking_side.get_active_immutable().hp - target_hp,
+                        damage_amount: attacking_side.get_active_immutable().hp - attacker_hp,
                     }));
                 instructions
                     .instruction_list
                     .push(Instruction::Damage(DamageInstruction {
                         side_ref: attacking_side_ref.get_other_side(),
-                        damage_amount: defending_side.get_active_immutable().hp - target_hp,
+                        damage_amount: defending_side.get_active_immutable().hp - defender_hp,
                     }));
 
-                attacking_side.get_active().hp = target_hp;
-                defending_side.get_active().hp = target_hp;
+                attacking_side.get_active().hp = attacker_hp;
+                defending_side.get_active().hp = defender_hp;
             }
         }
         Choices::SUBSTITUTE | Choices::SHEDTAIL => {
