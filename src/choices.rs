@@ -3292,6 +3292,9 @@ pub static MOVES: LazyLock<HashMap<Choices, Choice>> = LazyLock::new(|| {
         Choice {
             move_id: Choices::CURSE,
             move_type: PokemonType::GHOST,
+            // Only the non-Ghost Curse is modelled, which raises the user's own stats, so abilities
+            // such as Good as Gold and Magic Bounce do not stop it
+            target: MoveTarget::User,
             flags: Flags {
                 ..Default::default()
             },

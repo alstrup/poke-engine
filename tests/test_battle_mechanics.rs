@@ -16913,6 +16913,29 @@ fn test_thunderwave_into_goodasgold() {
 }
 
 #[test]
+fn test_curse_into_goodasgold_and_magicbounce() {
+    for ability in [Abilities::GOODASGOLD, Abilities::MAGICBOUNCE] {
+        let mut state = State::default();
+        state.side_two.get_active().ability = ability;
+
+        let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+            &mut state,
+            Choices::CURSE,
+            Choices::SPLASH,
+        );
+
+        // The non-Ghost Curse raises the user's own stats, which the target's ability cannot stop
+        let boosted_attack = vec_of_instructions[0].instruction_list.iter().any(|instruction| {
+            matches!(instruction, Instruction::Boost(boost)
+                if boost.side_ref == SideReference::SideOne
+                    && boost.stat == PokemonBoostableStat::Attack
+                    && boost.amount == 1)
+        });
+        assert!(boosted_attack, "{:?}", vec_of_instructions);
+    }
+}
+
+#[test]
 fn test_slackoff_into_goodasgold() {
     let mut state = State::default();
     state.side_two.get_active().ability = Abilities::GOODASGOLD;
