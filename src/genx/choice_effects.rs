@@ -54,6 +54,12 @@ pub fn modify_choice(
 ) {
     let (attacking_side, defending_side) = state.get_both_sides_immutable(attacking_side_ref);
     match attacker_choice.move_id {
+        // These fail, and the user does not faint, when there is no one left to switch in
+        Choices::HEALINGWISH | Choices::LUNARDANCE => {
+            if attacking_side.get_alive_pkmn_indices().is_empty() {
+                attacker_choice.remove_all_effects();
+            }
+        }
         Choices::ROOST => {
             let attacker = attacking_side.get_active_immutable();
             if attacker.hp == attacker.maxhp {

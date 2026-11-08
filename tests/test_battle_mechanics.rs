@@ -10147,6 +10147,32 @@ fn test_undo_trickroom() {
 }
 
 #[test]
+fn test_healingwish_fails_without_anyone_to_switch_in() {
+    let mut state = State::default();
+    for index in [
+        PokemonIndex::P1,
+        PokemonIndex::P2,
+        PokemonIndex::P3,
+        PokemonIndex::P4,
+        PokemonIndex::P5,
+    ] {
+        state.side_one.pokemon[index].hp = 0;
+    }
+
+    let vec_of_instructions = set_moves_on_pkmn_and_call_generate_instructions(
+        &mut state,
+        Choices::HEALINGWISH,
+        Choices::SPLASH,
+    );
+
+    let expected_instructions = vec![StateInstructions {
+        percentage: 100.0,
+        instruction_list: vec![],
+    }];
+    assert_eq!(expected_instructions, vec_of_instructions);
+}
+
+#[test]
 fn test_painsplit() {
     let mut state = State::default();
     state.side_one.get_active().hp = 50;
