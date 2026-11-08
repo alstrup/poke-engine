@@ -178,7 +178,30 @@ impl Node {
                 return prior.len() - 1;
             }
         }
+        let penalty = eval_weights().opponent_switch_penalty;
+        if penalty != 0.0 {
+            return self
+                .maximize_ucb_with_switch_penalty(self.s2_options.as_ref().unwrap(), penalty);
+        }
         self.maximize_ucb_for_side(self.s2_options.as_ref().unwrap())
+    }
+
+    /// As `maximize_ucb_for_side`, with `penalty` taken off the average score of every switch.
+    pub fn maximize_ucb_with_switch_penalty(&self, side_map: &[MoveNode], penalty: f32) -> usize {
+        let mut choice = 0;
+        let mut best_ucb1 = f32::MIN;
+        let numerator = eval_weights().exploration * (self.times_visited as f32).ln();
+        for (index, node) in side_map.iter().enumerate() {
+            let mut this_ucb1 = node.ucb1_with(numerator);
+            if matches!(node.move_choice, MoveChoice::Switch(_)) {
+                this_ucb1 -= penalty;
+            }
+            if this_ucb1 > best_ucb1 {
+                best_ucb1 = this_ucb1;
+                choice = index;
+            }
+        }
+        choice
     }
 
     unsafe fn sample_node(&self, move_vector: *mut Box<[Node]>, rng: &mut impl Rng) -> *mut Node {

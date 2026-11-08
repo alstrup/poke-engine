@@ -52,6 +52,9 @@ pub struct EvalWeights {
     pub opponent_model: f32,
     /// side two's boosts count this many times as much as side one's in the table
     pub opponent_boost_scale: f32,
+    /// taken off the average score of side two's switches when the search chooses for side two,
+    /// so that it expects the opponent to switch less often; 0 leaves the search as it was
+    pub opponent_switch_penalty: f32,
 }
 
 impl Default for EvalWeights {
@@ -92,6 +95,7 @@ impl Default for EvalWeights {
             playout_share: 1.0,
             opponent_model: 0.0,
             opponent_boost_scale: 1.0,
+            opponent_switch_penalty: 0.0,
         }
     }
 }
@@ -144,6 +148,7 @@ impl EvalWeights {
                 "playout_share" => weights.playout_share = value,
                 "opponent_model" => weights.opponent_model = value,
                 "opponent_boost_scale" => weights.opponent_boost_scale = value,
+                "opponent_switch_penalty" => weights.opponent_switch_penalty = value,
                 other => return Err(format!("unknown evaluation weight: {}", other)),
             }
         }
