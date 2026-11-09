@@ -290,7 +290,8 @@ pub fn get_choice_move_disable_instructions(
     move_name: &Choices,
 ) -> Vec<Instruction> {
     let mut moves_to_disable = vec![];
-    let mut iter = pkmn.moves.into_iter();
+    // hidden candidate moves too, so that the lock holds in passes where they are not hidden
+    let mut iter = pkmn.moves.iter_all();
     while let Some(p) = iter.next() {
         if &p.id != move_name
             && p.disabled == false

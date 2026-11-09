@@ -321,55 +321,35 @@ pub struct PokemonMoveIterator<'a> {
     pub pokemon_move: &'a PokemonMoves,
     pub pokemon_move_index: PokemonMoveIndex,
     pub index: usize,
+    /// Pass over the moves hidden in this pass of a search (see `PokemonMoves::hidden`).
+    pub skip_hidden: bool,
 }
+
+const MOVE_INDICES: [PokemonMoveIndex; 8] = [
+    PokemonMoveIndex::M0,
+    PokemonMoveIndex::M1,
+    PokemonMoveIndex::M2,
+    PokemonMoveIndex::M3,
+    PokemonMoveIndex::M4,
+    PokemonMoveIndex::M5,
+    PokemonMoveIndex::M6,
+    PokemonMoveIndex::M7,
+];
 
 impl<'a> Iterator for PokemonMoveIterator<'a> {
     type Item = &'a Move;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.index {
-            0 => {
-                self.index += 1;
-                self.pokemon_move_index = PokemonMoveIndex::M0;
-                Some(&self.pokemon_move.m0)
+        while self.index < MOVE_INDICES.len() {
+            let index = self.index;
+            self.index += 1;
+            if self.skip_hidden && self.pokemon_move.hidden & (1 << index) != 0 {
+                continue;
             }
-            1 => {
-                self.index += 1;
-                self.pokemon_move_index = PokemonMoveIndex::M1;
-                Some(&self.pokemon_move.m1)
-            }
-            2 => {
-                self.index += 1;
-                self.pokemon_move_index = PokemonMoveIndex::M2;
-                Some(&self.pokemon_move.m2)
-            }
-            3 => {
-                self.index += 1;
-                self.pokemon_move_index = PokemonMoveIndex::M3;
-                Some(&self.pokemon_move.m3)
-            }
-            4 => {
-                self.index += 1;
-                self.pokemon_move_index = PokemonMoveIndex::M4;
-                Some(&self.pokemon_move.m4)
-            }
-            5 => {
-                self.index += 1;
-                self.pokemon_move_index = PokemonMoveIndex::M5;
-                Some(&self.pokemon_move.m5)
-            }
-            6 => {
-                self.index += 1;
-                self.pokemon_move_index = PokemonMoveIndex::M6;
-                Some(&self.pokemon_move.m6)
-            }
-            7 => {
-                self.index += 1;
-                self.pokemon_move_index = PokemonMoveIndex::M7;
-                Some(&self.pokemon_move.m7)
-            }
-            _ => None,
+            self.pokemon_move_index = MOVE_INDICES[index];
+            return Some(&self.pokemon_move[&MOVE_INDICES[index]]);
         }
+        None
     }
 }
 
@@ -377,12 +357,32 @@ impl<'a> IntoIterator for &'a PokemonMoves {
     type Item = &'a Move;
     type IntoIter = PokemonMoveIterator<'a>;
 
+    /// The moves the Pokémon has in this pass of a search, without those hidden.
     fn into_iter(self) -> Self::IntoIter {
         PokemonMoveIterator {
             pokemon_move: &self,
             pokemon_move_index: PokemonMoveIndex::M0,
             index: 0,
+            skip_hidden: true,
         }
+    }
+}
+
+impl PokemonMoves {
+    /// Every move slot, hidden or not, for effects that must reach moves the Pokémon may have,
+    /// such as a Choice item locking all others.
+    pub fn iter_all(&self) -> PokemonMoveIterator<'_> {
+        PokemonMoveIterator {
+            pokemon_move: self,
+            pokemon_move_index: PokemonMoveIndex::M0,
+            index: 0,
+            skip_hidden: false,
+        }
+    }
+
+    /// Whether a slot is hidden in this pass of a search.
+    pub fn is_hidden(&self, index: &PokemonMoveIndex) -> bool {
+        self.hidden & (1 << (*index as u8)) != 0
     }
 }
 
@@ -651,6 +651,10 @@ pub struct PokemonMoves {
     pub m5: Move,
     pub m6: Move,
     pub m7: Move,
+    /// Slots whose moves the Pokémon does not have in this pass of a search, one bit per slot.
+    /// A search over an opponent whose moves are unknown gives each pass one guessed set of them
+    /// and hides the other candidates. It is not part of the written state.
+    pub hidden: u8,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -967,6 +971,7 @@ impl Default for Pokemon {
                 m5: Default::default(),
                 m6: Default::default(),
                 m7: Default::default(),
+                hidden: 0,
             },
         }
     }
@@ -1135,6 +1140,7 @@ impl Pokemon {
                 m7: split
                     .get(32)
                     .map_or_else(Move::default, |text| Move::deserialize(text)),
+                hidden: 0,
             },
             mega_evolved: split[26].parse::<bool>().unwrap(),
             terastallized: split[27].parse::<bool>().unwrap(),

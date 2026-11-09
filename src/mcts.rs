@@ -19,6 +19,36 @@ use std::time::Instant;
 /// How often a node must have been visited before the policy is asked about side two's options.
 const OPPONENT_MODEL_AFTER: u32 = 4;
 
+/// For each of side two's Pokémon, the sets of moves it may have, as masks of the move slots it has
+/// in that set. An empty list means its moves are known. Each pass of the search draws one set for
+/// each Pokémon and hides its other moves, so the search plays against the spread of sets it might
+/// have rather than one guess taken as certain. Drawing a set more often makes it likelier.
+pub type Movesets = [Vec<u8>; 6];
+
+/// Hides the moves of side two's Pokémon that are not in one set drawn from each one's list.
+fn draw_movesets(state: &mut State, movesets: &Movesets, rng: &mut impl Rng) {
+    for (pokemon, sets) in state.side_two.pokemon.pkmn.iter_mut().zip(movesets.iter()) {
+        if !sets.is_empty() {
+            pokemon.moves.hidden = !sets[rng.random_range(0..sets.len())];
+        }
+    }
+}
+
+/// Every option of both sides, with nothing hidden: a node keeps them all, and each pass of the
+/// search chooses among those it has.
+fn all_options_unhidden(state: &mut State) -> (Vec<MoveChoice>, Vec<MoveChoice>) {
+    let mut hidden = [0u8; 6];
+    for (index, pokemon) in state.side_two.pokemon.pkmn.iter_mut().enumerate() {
+        hidden[index] = pokemon.moves.hidden;
+        pokemon.moves.hidden = 0;
+    }
+    let options = state.get_all_options();
+    for (index, pokemon) in state.side_two.pokemon.pkmn.iter_mut().enumerate() {
+        pokemon.moves.hidden = hidden[index];
+    }
+    options
+}
+
 /// Hashes the children map's keys, which are a node's address and two option indices. The keys
 /// come from the search itself, so a fast multiply-and-rotate hash (as in rustc's FxHash) is
 /// enough, and much cheaper than the standard library's SipHash.
@@ -95,6 +125,7 @@ impl Node {
                 move_choice: x.clone(),
                 total_score: 0.0,
                 visits: 0,
+                available: 0,
             })
             .collect();
         let s2_options_vec: Vec<MoveNode> = s2_options
@@ -103,6 +134,7 @@ impl Node {
                 move_choice: x.clone(),
                 total_score: 0.0,
                 visits: 0,
+                available: 0,
             })
             .collect();
 
@@ -132,7 +164,7 @@ impl Node {
         rng: &mut impl Rng,
     ) -> (*mut Node, usize, usize) {
         if self.s1_options.is_none() {
-            let (s1_options, s2_options) = state.get_all_options();
+            let (s1_options, s2_options) = all_options_unhidden(state);
             self.populate(s1_options, s2_options);
         }
 
@@ -153,6 +185,10 @@ impl Node {
     /// Side two's choice: by the search's own rule, or some of the time, once the node has been
     /// visited a few times and a policy is set, drawn from what people are likely to choose.
     fn side_two_choice(&mut self, state: &mut State, rng: &mut impl Rng) -> usize {
+        let hidden = state.side_two.get_active_immutable().moves.hidden;
+        if hidden != 0 {
+            return self.side_two_choice_among_available(state);
+        }
         let share = eval_weights().opponent_model;
         if share > 0.0 && self.times_visited >= OPPONENT_MODEL_AFTER && rng.random::<f32>() < share
         {
@@ -184,6 +220,43 @@ impl Node {
                 .maximize_ucb_with_switch_penalty(self.s2_options.as_ref().unwrap(), penalty);
         }
         self.maximize_ucb_for_side(self.s2_options.as_ref().unwrap())
+    }
+
+    /// Side two's choice when some of its active Pokémon's moves are hidden in this pass: only among
+    /// the options it has, each explored by how often it has been available rather than by the
+    /// node's visits, as in information-set search.
+    fn side_two_choice_among_available(&mut self, state: &State) -> usize {
+        let moves = &state.side_two.get_active_immutable().moves;
+        let exploration = eval_weights().exploration;
+        let penalty = eval_weights().opponent_switch_penalty;
+        let mut choice = 0;
+        let mut best_ucb1 = f32::MIN;
+        for (index, node) in self.s2_options.as_mut().unwrap().iter_mut().enumerate() {
+            let hidden = match &node.move_choice {
+                MoveChoice::Move(slot)
+                | MoveChoice::MoveTera(slot)
+                | MoveChoice::MoveMega(slot) => moves.is_hidden(slot),
+                _ => false,
+            };
+            if hidden {
+                continue;
+            }
+            node.available += 1;
+            let mut this_ucb1 = if node.visits == 0 {
+                f32::INFINITY
+            } else {
+                node.total_score / node.visits as f32
+                    + (exploration * (node.available as f32).ln() / node.visits as f32).sqrt()
+            };
+            if matches!(node.move_choice, MoveChoice::Switch(_)) {
+                this_ucb1 -= penalty;
+            }
+            if this_ucb1 > best_ucb1 {
+                best_ucb1 = this_ucb1;
+                choice = index;
+            }
+        }
+        choice
     }
 
     /// As `maximize_ucb_for_side`, with `penalty` taken off the average score of every switch.
@@ -439,6 +512,8 @@ pub struct MoveNode {
     pub move_choice: MoveChoice,
     pub total_score: f32,
     pub visits: u32,
+    /// How many passes of the search had this option available, when some moves were hidden.
+    pub available: u32,
 }
 
 impl MoveNode {
@@ -512,11 +587,16 @@ fn run_mcts_loop(
     root_eval: &f32,
     children: &mut Children,
     limit: SearchLimit,
+    movesets: &Movesets,
 ) {
     let mut rng = rng();
     let start_time = Instant::now();
+    let drawing = movesets.iter().any(|sets| !sets.is_empty());
     loop {
         for _ in 0..1000 {
+            if drawing {
+                draw_movesets(state, movesets, &mut rng);
+            }
             mcts_iteration(root_node, state, root_eval, children, &mut rng);
         }
         if root_node.times_visited >= 10_000_000 {
@@ -544,6 +624,26 @@ pub fn perform_mcts(
     max_time: Duration,
     max_iterations: u32,
 ) -> MctsResult {
+    perform_mcts_with_movesets(
+        state,
+        side_one_options,
+        side_two_options,
+        max_time,
+        max_iterations,
+        &Movesets::default(),
+    )
+}
+
+/// As `perform_mcts`, against an opponent whose Pokémon may have any of several sets of moves
+/// (see `Movesets`). Side two's options at the root should include every candidate move.
+pub fn perform_mcts_with_movesets(
+    state: &mut State,
+    side_one_options: Vec<MoveChoice>,
+    side_two_options: Vec<MoveChoice>,
+    max_time: Duration,
+    max_iterations: u32,
+    movesets: &Movesets,
+) -> MctsResult {
     let mut root_node = Node::new();
     unsafe {
         root_node.populate(side_one_options, side_two_options);
@@ -563,7 +663,12 @@ pub fn perform_mcts(
         &root_eval,
         &mut children,
         search_limit,
+        movesets,
     );
+    // leave the state as it came, with nothing hidden
+    for pokemon in state.side_two.pokemon.pkmn.iter_mut() {
+        pokemon.moves.hidden = 0;
+    }
 
     let result = MctsResult {
         s1: root_node

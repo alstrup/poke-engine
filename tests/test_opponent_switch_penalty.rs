@@ -25,11 +25,13 @@ fn test_switch_penalty_makes_a_slightly_better_switch_lose_to_a_move() {
                 move_choice: MoveChoice::Move(poke_engine::state::PokemonMoveIndex::M0),
                 total_score: 25.0,
                 visits: 50,
+                available: 0,
             },
             MoveNode {
                 move_choice: MoveChoice::Switch(poke_engine::state::PokemonIndex::P1),
                 total_score: 26.0,
                 visits: 50,
+                available: 0,
             },
         ]
     };
