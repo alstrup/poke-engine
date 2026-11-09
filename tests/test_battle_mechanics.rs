@@ -16982,12 +16982,15 @@ fn test_curse_into_goodasgold_and_magicbounce() {
         );
 
         // The non-Ghost Curse raises the user's own stats, which the target's ability cannot stop
-        let boosted_attack = vec_of_instructions[0].instruction_list.iter().any(|instruction| {
-            matches!(instruction, Instruction::Boost(boost)
+        let boosted_attack = vec_of_instructions[0]
+            .instruction_list
+            .iter()
+            .any(|instruction| {
+                matches!(instruction, Instruction::Boost(boost)
                 if boost.side_ref == SideReference::SideOne
                     && boost.stat == PokemonBoostableStat::Attack
                     && boost.amount == 1)
-        });
+            });
         assert!(boosted_attack, "{:?}", vec_of_instructions);
     }
 }

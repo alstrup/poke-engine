@@ -499,7 +499,11 @@ impl Pokemon {
     ) {
         let mut iter = self.moves.into_iter();
         while let Some(p) = iter.next() {
-            if !p.disabled && p.pp > 0 {
+            // an empty extra slot is not a move
+            if !p.disabled
+                && p.pp > 0
+                && !(p.id == Choices::NONE && iter.pokemon_move_index.is_extra())
+            {
                 match last_used_move {
                     LastUsedMove::Move(last_used_move) => {
                         if encored && last_used_move != &iter.pokemon_move_index {

@@ -292,7 +292,10 @@ pub fn get_choice_move_disable_instructions(
     let mut moves_to_disable = vec![];
     let mut iter = pkmn.moves.into_iter();
     while let Some(p) = iter.next() {
-        if &p.id != move_name && p.disabled == false {
+        if &p.id != move_name
+            && p.disabled == false
+            && !(p.id == Choices::NONE && iter.pokemon_move_index.is_extra())
+        {
             moves_to_disable.push(Instruction::DisableMove(DisableMoveInstruction {
                 side_ref: *side_ref,
                 move_index: iter.pokemon_move_index,

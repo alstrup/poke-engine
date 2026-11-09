@@ -33,10 +33,10 @@ use super::items::{
 };
 use super::state::{MoveChoice, PokemonVolatileStatus, Terrain, Weather};
 use crate::choices::{Choice, MoveCategory};
-use crate::pokemon::PokemonName;
 use crate::instruction::{
     ChangeStatusInstruction, DamageInstruction, Instruction, StateInstructions, SwitchInstruction,
 };
+use crate::pokemon::PokemonName;
 use crate::state::{
     LastUsedMove, PokemonBoostableStat, PokemonIndex, PokemonMoveIndex, PokemonSideCondition,
     PokemonStatus, PokemonType, Side, SideMovesFirst, SideReference, State,

@@ -87,14 +87,34 @@ pub enum PokemonMoveIndex {
     M1,
     M2,
     M3,
+    // Four more slots, for candidate moves of an opponent whose moves are not known: a search
+    // hides all but one guessed set of them at a time (see mcts.rs).
+    M4,
+    M5,
+    M6,
+    M7,
 }
 impl PokemonMoveIndex {
+    /// One of the four slots beyond a Pokémon's usual four, which hold candidate moves only.
+    pub fn is_extra(&self) -> bool {
+        matches!(
+            self,
+            PokemonMoveIndex::M4
+                | PokemonMoveIndex::M5
+                | PokemonMoveIndex::M6
+                | PokemonMoveIndex::M7
+        )
+    }
     pub fn serialize(&self) -> String {
         match self {
             PokemonMoveIndex::M0 => "0".to_string(),
             PokemonMoveIndex::M1 => "1".to_string(),
             PokemonMoveIndex::M2 => "2".to_string(),
             PokemonMoveIndex::M3 => "3".to_string(),
+            PokemonMoveIndex::M4 => "4".to_string(),
+            PokemonMoveIndex::M5 => "5".to_string(),
+            PokemonMoveIndex::M6 => "6".to_string(),
+            PokemonMoveIndex::M7 => "7".to_string(),
         }
     }
     pub fn deserialize(serialized: &str) -> PokemonMoveIndex {
@@ -103,6 +123,10 @@ impl PokemonMoveIndex {
             "1" => PokemonMoveIndex::M1,
             "2" => PokemonMoveIndex::M2,
             "3" => PokemonMoveIndex::M3,
+            "4" => PokemonMoveIndex::M4,
+            "5" => PokemonMoveIndex::M5,
+            "6" => PokemonMoveIndex::M6,
+            "7" => PokemonMoveIndex::M7,
             _ => panic!("Invalid PokemonMoveIndex: {}", serialized),
         }
     }
@@ -270,6 +294,10 @@ impl Index<&PokemonMoveIndex> for PokemonMoves {
             PokemonMoveIndex::M1 => &self.m1,
             PokemonMoveIndex::M2 => &self.m2,
             PokemonMoveIndex::M3 => &self.m3,
+            PokemonMoveIndex::M4 => &self.m4,
+            PokemonMoveIndex::M5 => &self.m5,
+            PokemonMoveIndex::M6 => &self.m6,
+            PokemonMoveIndex::M7 => &self.m7,
         }
     }
 }
@@ -281,6 +309,10 @@ impl IndexMut<&PokemonMoveIndex> for PokemonMoves {
             PokemonMoveIndex::M1 => &mut self.m1,
             PokemonMoveIndex::M2 => &mut self.m2,
             PokemonMoveIndex::M3 => &mut self.m3,
+            PokemonMoveIndex::M4 => &mut self.m4,
+            PokemonMoveIndex::M5 => &mut self.m5,
+            PokemonMoveIndex::M6 => &mut self.m6,
+            PokemonMoveIndex::M7 => &mut self.m7,
         }
     }
 }
@@ -315,6 +347,26 @@ impl<'a> Iterator for PokemonMoveIterator<'a> {
                 self.index += 1;
                 self.pokemon_move_index = PokemonMoveIndex::M3;
                 Some(&self.pokemon_move.m3)
+            }
+            4 => {
+                self.index += 1;
+                self.pokemon_move_index = PokemonMoveIndex::M4;
+                Some(&self.pokemon_move.m4)
+            }
+            5 => {
+                self.index += 1;
+                self.pokemon_move_index = PokemonMoveIndex::M5;
+                Some(&self.pokemon_move.m5)
+            }
+            6 => {
+                self.index += 1;
+                self.pokemon_move_index = PokemonMoveIndex::M6;
+                Some(&self.pokemon_move.m6)
+            }
+            7 => {
+                self.index += 1;
+                self.pokemon_move_index = PokemonMoveIndex::M7;
+                Some(&self.pokemon_move.m7)
             }
             _ => None,
         }
@@ -595,6 +647,10 @@ pub struct PokemonMoves {
     pub m1: Move,
     pub m2: Move,
     pub m3: Move,
+    pub m4: Move,
+    pub m5: Move,
+    pub m6: Move,
+    pub m7: Move,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -907,6 +963,10 @@ impl Default for Pokemon {
                 m1: Default::default(),
                 m2: Default::default(),
                 m3: Default::default(),
+                m4: Default::default(),
+                m5: Default::default(),
+                m6: Default::default(),
+                m7: Default::default(),
             },
         }
     }
@@ -994,7 +1054,25 @@ impl Pokemon {
             self.mega_evolved,
             self.terastallized,
             self.tera_type.to_string(),
-        )
+        ) + &self.serialize_extra_moves()
+    }
+
+    /// The four extra move slots, after a comma each, or nothing when they are empty, so that a
+    /// Pokémon with four moves is written as before.
+    fn serialize_extra_moves(&self) -> String {
+        let extra = [
+            &self.moves.m4,
+            &self.moves.m5,
+            &self.moves.m6,
+            &self.moves.m7,
+        ];
+        if extra.iter().all(|m| m.id == Choices::NONE) {
+            return String::new();
+        }
+        extra
+            .iter()
+            .map(|m| format!(",{}", m.serialize()))
+            .collect()
     }
 
     pub fn deserialize(serialized: &str) -> Pokemon {
@@ -1044,6 +1122,19 @@ impl Pokemon {
                 m1: Move::deserialize(split[23]),
                 m2: Move::deserialize(split[24]),
                 m3: Move::deserialize(split[25]),
+                // The four extra slots are written after the Tera type, and only when used.
+                m4: split
+                    .get(29)
+                    .map_or_else(Move::default, |text| Move::deserialize(text)),
+                m5: split
+                    .get(30)
+                    .map_or_else(Move::default, |text| Move::deserialize(text)),
+                m6: split
+                    .get(31)
+                    .map_or_else(Move::default, |text| Move::deserialize(text)),
+                m7: split
+                    .get(32)
+                    .map_or_else(Move::default, |text| Move::deserialize(text)),
             },
             mega_evolved: split[26].parse::<bool>().unwrap(),
             terastallized: split[27].parse::<bool>().unwrap(),
