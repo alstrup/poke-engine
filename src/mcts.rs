@@ -186,9 +186,6 @@ impl Node {
     /// visited a few times and a policy is set, drawn from what people are likely to choose.
     fn side_two_choice(&mut self, state: &mut State, rng: &mut impl Rng) -> usize {
         let hidden = state.side_two.get_active_immutable().moves.hidden;
-        if hidden != 0 {
-            return self.side_two_choice_among_available(state);
-        }
         let share = eval_weights().opponent_model;
         if share > 0.0 && self.times_visited >= OPPONENT_MODEL_AFTER && rng.random::<f32>() < share
         {
@@ -204,15 +201,29 @@ impl Node {
             }
             let prior = self.s2_prior.as_ref().unwrap();
             if prior.len() == self.s2_options.as_ref().unwrap().len() {
-                let mut threshold = rng.random::<f32>();
-                for (index, chance) in prior.iter().enumerate() {
-                    threshold -= chance;
-                    if threshold <= 0.0 {
-                        return index;
+                // the policy saw every candidate move; draw again when it picks one hidden in this pass
+                let hidden_mask = hidden_options(self.s2_options.as_ref().unwrap(), state);
+                for _ in 0..8 {
+                    let mut threshold = rng.random::<f32>();
+                    let mut drawn = prior.len() - 1;
+                    for (index, chance) in prior.iter().enumerate() {
+                        threshold -= chance;
+                        if threshold <= 0.0 {
+                            drawn = index;
+                            break;
+                        }
+                    }
+                    if hidden_mask & (1 << drawn) == 0 {
+                        if hidden != 0 {
+                            self.s2_options.as_mut().unwrap()[drawn].available += 1;
+                        }
+                        return drawn;
                     }
                 }
-                return prior.len() - 1;
             }
+        }
+        if hidden != 0 {
+            return self.side_two_choice_among_available(state);
         }
         let penalty = eval_weights().opponent_switch_penalty;
         if penalty != 0.0 {
@@ -505,6 +516,25 @@ fn playout_choice(options: &Vec<MoveChoice>, rng: &mut impl Rng) -> MoveChoice {
         return MoveChoice::None;
     }
     options[rng.random_range(0..options.len())].clone()
+}
+
+/// A mask of side two's options that are moves hidden in this pass.
+fn hidden_options(options: &[MoveNode], state: &State) -> u32 {
+    let moves = &state.side_two.get_active_immutable().moves;
+    if moves.hidden == 0 {
+        return 0;
+    }
+    let mut mask = 0;
+    for (index, node) in options.iter().enumerate() {
+        if let MoveChoice::Move(slot) | MoveChoice::MoveTera(slot) | MoveChoice::MoveMega(slot) =
+            &node.move_choice
+        {
+            if moves.is_hidden(slot) {
+                mask |= 1 << index;
+            }
+        }
+    }
+    mask
 }
 
 #[derive(Debug)]
