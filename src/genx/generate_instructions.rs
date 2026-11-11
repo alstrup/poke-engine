@@ -3138,6 +3138,16 @@ fn add_end_of_turn_instructions(
         }
     }
 
+    // Leftovers and Black Sludge come before the damage of burn and poison
+    for side_ref in sides {
+        let active_pkmn = state.get_side(side_ref).get_active();
+        if active_pkmn.hp != 0
+            && matches!(active_pkmn.item, Items::LEFTOVERS | Items::BLACKSLUDGE)
+        {
+            item_end_of_turn(state, side_ref, &mut incoming_instructions);
+        }
+    }
+
     // status damage
     for side_ref in sides {
         let (side, other_side) = state.get_both_sides(side_ref);
@@ -3233,7 +3243,9 @@ fn add_end_of_turn_instructions(
             continue;
         }
 
-        item_end_of_turn(state, side_ref, &mut incoming_instructions);
+        if !matches!(active_pkmn.item, Items::LEFTOVERS | Items::BLACKSLUDGE) {
+            item_end_of_turn(state, side_ref, &mut incoming_instructions);
+        }
         ability_end_of_turn(state, side_ref, &mut incoming_instructions);
     }
 
@@ -10994,6 +11006,37 @@ mod tests {
                 side_ref: SideReference::SideOne,
                 damage_amount: expected_damage,
             })],
+        };
+
+        assert_eq!(expected_instructions, incoming_instructions)
+    }
+
+    #[test]
+    fn test_leftovers_heals_before_burn_damage() {
+        let mut state = State::default();
+        state.side_one.get_active().status = PokemonStatus::BURN;
+        state.side_one.get_active().item = Items::LEFTOVERS;
+        state.side_one.get_active().hp = 3;
+
+        let mut incoming_instructions = StateInstructions::default();
+        add_end_of_turn_instructions(
+            &mut state,
+            &mut incoming_instructions,
+            &SideReference::SideOne,
+        );
+
+        let expected_instructions = StateInstructions {
+            percentage: 100.0,
+            instruction_list: vec![
+                Instruction::Heal(HealInstruction {
+                    side_ref: SideReference::SideOne,
+                    heal_amount: 6,
+                }),
+                Instruction::Damage(DamageInstruction {
+                    side_ref: SideReference::SideOne,
+                    damage_amount: 6,
+                }),
+            ],
         };
 
         assert_eq!(expected_instructions, incoming_instructions)
