@@ -3243,10 +3243,14 @@ fn add_end_of_turn_instructions(
             continue;
         }
 
-        if !matches!(active_pkmn.item, Items::LEFTOVERS | Items::BLACKSLUDGE) {
+        // abilities first: Poison Heal does not heal on the turn a Toxic Orb poisons
+        let item = active_pkmn.item;
+        ability_end_of_turn(state, side_ref, &mut incoming_instructions);
+        if !matches!(item, Items::LEFTOVERS | Items::BLACKSLUDGE)
+            && state.get_side(side_ref).get_active().hp != 0
+        {
             item_end_of_turn(state, side_ref, &mut incoming_instructions);
         }
-        ability_end_of_turn(state, side_ref, &mut incoming_instructions);
     }
 
     // leechseed sap
@@ -11009,6 +11013,27 @@ mod tests {
         };
 
         assert_eq!(expected_instructions, incoming_instructions)
+    }
+
+    #[test]
+    fn test_poisonheal_does_not_heal_on_the_turn_toxicorb_poisons() {
+        let mut state = State::default();
+        state.side_one.get_active().ability = Abilities::POISONHEAL;
+        state.side_one.get_active().item = Items::TOXICORB;
+        state.side_one.get_active().hp = 50;
+
+        let mut incoming_instructions = StateInstructions::default();
+        add_end_of_turn_instructions(
+            &mut state,
+            &mut incoming_instructions,
+            &SideReference::SideOne,
+        );
+
+        assert!(incoming_instructions
+            .instruction_list
+            .iter()
+            .all(|instruction| !matches!(instruction, Instruction::Heal(_))));
+        assert_eq!(incoming_instructions.instruction_list.len(), 1);
     }
 
     #[test]
