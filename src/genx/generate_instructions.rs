@@ -3532,9 +3532,12 @@ fn add_end_of_turn_instructions(
                 ));
         }
 
-        if side
-            .volatile_statuses
-            .contains(&PokemonVolatileStatus::PARTIALLYTRAPPED)
+        // Magic Guard takes no damage but from attacks
+        let magic_guard = side.get_active_immutable().ability == Abilities::MAGICGUARD;
+        if !magic_guard
+            && side
+                .volatile_statuses
+                .contains(&PokemonVolatileStatus::PARTIALLYTRAPPED)
         {
             let active_pkmn = side.get_active();
             let damage_amount = cmp::min(
@@ -3549,9 +3552,10 @@ fn add_end_of_turn_instructions(
                 }));
             active_pkmn.hp -= damage_amount;
         }
-        if side
-            .volatile_statuses
-            .contains(&PokemonVolatileStatus::SALTCURE)
+        if !magic_guard
+            && side
+                .volatile_statuses
+                .contains(&PokemonVolatileStatus::SALTCURE)
         {
             let active_pkmn = side.get_active();
             let mut divisor = SALT_CURE_DAMAGE_DIVISOR;
@@ -10988,6 +10992,29 @@ mod tests {
         };
 
         assert_eq!(expected_instructions, incoming_instructions)
+    }
+
+    #[test]
+    fn test_saltcure_and_partial_trapping_do_not_hurt_magicguard() {
+        let mut state = State::default();
+        state.side_one.get_active().ability = Abilities::MAGICGUARD;
+        state
+            .side_one
+            .volatile_statuses
+            .insert(PokemonVolatileStatus::SALTCURE);
+        state
+            .side_one
+            .volatile_statuses
+            .insert(PokemonVolatileStatus::PARTIALLYTRAPPED);
+
+        let mut incoming_instructions = StateInstructions::default();
+        add_end_of_turn_instructions(
+            &mut state,
+            &mut incoming_instructions,
+            &SideReference::SideOne,
+        );
+
+        assert_eq!(StateInstructions::default(), incoming_instructions)
     }
 
     #[test]
