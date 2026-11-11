@@ -1302,6 +1302,36 @@ fn test_protect_stops_secondaries() {
 }
 
 #[test]
+fn test_protect_stops_fixed_damage() {
+    for attack in [Choices::SEISMICTOSS, Choices::SUPERFANG] {
+        let mut state = State::default();
+
+        let vec_of_instructions =
+            set_moves_on_pkmn_and_call_generate_instructions(&mut state, Choices::PROTECT, attack);
+
+        let expected_instructions = vec![StateInstructions {
+            percentage: 100.0,
+            instruction_list: vec![
+                Instruction::ApplyVolatileStatus(ApplyVolatileStatusInstruction {
+                    side_ref: SideReference::SideOne,
+                    volatile_status: PokemonVolatileStatus::PROTECT,
+                }),
+                Instruction::RemoveVolatileStatus(RemoveVolatileStatusInstruction {
+                    side_ref: SideReference::SideOne,
+                    volatile_status: PokemonVolatileStatus::PROTECT,
+                }),
+                Instruction::ChangeSideCondition(ChangeSideConditionInstruction {
+                    side_ref: SideReference::SideOne,
+                    side_condition: PokemonSideCondition::Protect,
+                    amount: 1,
+                }),
+            ],
+        }];
+        assert_eq!(expected_instructions, vec_of_instructions);
+    }
+}
+
+#[test]
 fn test_protect_stops_after_damage_hit_callback() {
     let mut state = State::default();
     state.side_one.get_active().item = Items::LEFTOVERS;

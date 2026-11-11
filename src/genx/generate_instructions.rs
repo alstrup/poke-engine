@@ -2369,7 +2369,12 @@ pub fn generate_instructions_from_move(
     let (attacker_side, defender_side) = state.get_both_sides_immutable(&attacking_side);
     let attacker = attacker_side.get_active_immutable();
     let defender = defender_side.get_active_immutable();
-    let fixed_damage = choice.move_id.fixed_damage(attacker, defender);
+    // a move stopped by Protect has been made a status move by now, and deals nothing
+    let fixed_damage = if choice.category == MoveCategory::Status {
+        None
+    } else {
+        choice.move_id.fixed_damage(attacker, defender)
+    };
     let damage = if let Some(fixed_damage) = fixed_damage {
         if type_effectiveness_modifier(&choice.move_type, defender) == 0.0 {
             Some((0, 0))
