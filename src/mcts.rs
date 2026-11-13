@@ -168,7 +168,12 @@ impl Node {
             self.populate(s1_options, s2_options);
         }
 
-        let s1_mc_index = self.maximize_ucb_for_side(self.s1_options.as_ref().unwrap());
+        let own_penalty = eval_weights().own_switch_penalty;
+        let s1_mc_index = if own_penalty != 0.0 {
+            self.maximize_ucb_with_switch_penalty(self.s1_options.as_ref().unwrap(), own_penalty)
+        } else {
+            self.maximize_ucb_for_side(self.s1_options.as_ref().unwrap())
+        };
         let s2_mc_index = self.side_two_choice(state, rng);
         let key = (self as *mut Node as usize, s1_mc_index, s2_mc_index);
         match children.get_mut(&key) {
